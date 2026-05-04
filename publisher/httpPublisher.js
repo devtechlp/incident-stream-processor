@@ -15,8 +15,8 @@ async function publish(doc) {
       // Function App key for auth (set in Azure portal)
       'x-functions-key': process.env.FUNCTION_APP_KEY || '',
     },
-    // Agent can take up to 60s — don't timeout too early
-    timeout: 70000,
+    // Function responds 202 immediately — 15s is plenty
+    timeout: 15000,
   });
 
   logger.info(`Incident ${doc._id} forwarded — Function responded: ${response.status}`);
