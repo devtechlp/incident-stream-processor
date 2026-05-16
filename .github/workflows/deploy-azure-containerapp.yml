@@ -10,7 +10,6 @@ permissions:
   id-token: write
 
 env:
-  # Background worker — no HTTP ingress needed
   APP_NAME: incident-stream-proc
   RESOURCE_GROUP: ${{ secrets.AZURE_RESOURCE_GROUP }}
   ACR_NAME: ${{ secrets.AZURE_CONTAINER_REGISTRY_NAME }}
@@ -22,6 +21,7 @@ env:
   MONGO_COLLECTION: ${{ secrets.MONGO_COLLECTION }}
   FUNCTION_APP_URL: ${{ secrets.FUNCTION_APP_URL }}
   FUNCTION_APP_KEY: ${{ secrets.FUNCTION_APP_KEY }}
+  DYNATRACE_WEBHOOK_TOKEN: ${{ secrets.DYNATRACE_WEBHOOK_TOKEN }}
 
 jobs:
   deploy:
@@ -53,6 +53,8 @@ jobs:
               --image "$IMAGE" \
               --min-replicas 1 \
               --max-replicas 1 \
+              --ingress external \
+              --target-port 3000 \
               --registry-server "$ACR_NAME.azurecr.io" \
               --registry-username "$ACR_USERNAME" \
               --registry-password "$ACR_PASSWORD" \
@@ -61,7 +63,8 @@ jobs:
                 "MONGO_DB_NAME=$MONGO_DB_NAME" \
                 "MONGO_COLLECTION=$MONGO_COLLECTION" \
                 "FUNCTION_APP_URL=$FUNCTION_APP_URL" \
-                "FUNCTION_APP_KEY=$FUNCTION_APP_KEY"
+                "FUNCTION_APP_KEY=$FUNCTION_APP_KEY" \
+                "DYNATRACE_WEBHOOK_TOKEN=$DYNATRACE_WEBHOOK_TOKEN"
           else
             echo "Updating Container App $APP_NAME..."
             az containerapp update \
@@ -73,7 +76,14 @@ jobs:
                 "MONGO_DB_NAME=$MONGO_DB_NAME" \
                 "MONGO_COLLECTION=$MONGO_COLLECTION" \
                 "FUNCTION_APP_URL=$FUNCTION_APP_URL" \
-                "FUNCTION_APP_KEY=$FUNCTION_APP_KEY"
+                "FUNCTION_APP_KEY=$FUNCTION_APP_KEY" \
+                "DYNATRACE_WEBHOOK_TOKEN=$DYNATRACE_WEBHOOK_TOKEN"
+
+            az containerapp ingress enable \
+              --name "$APP_NAME" \
+              --resource-group "$RESOURCE_GROUP" \
+              --type external \
+              --target-port 3000
 
             az containerapp registry set \
               --name "$APP_NAME" \
