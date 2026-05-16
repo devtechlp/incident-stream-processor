@@ -4,7 +4,8 @@
   "description": "MongoDB change stream listener — forwards incidents to the incident-agent Function App",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "poller": "node run-poller.js"
   },
   "dependencies": {
     "axios": "^1.6.0",

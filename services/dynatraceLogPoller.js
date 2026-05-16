@@ -38,16 +38,17 @@ async function getOAuthToken() {
 // Execute a DQL query on Grail. Grail may respond synchronously or return a
 // requestToken for async polling — this function handles both cases.
 async function executeDql(token, query, from, to) {
-  const res = await axios.post(
-    `${DT_ENV_URL}/platform/storage/query/v1/query:execute`,
-    {
-      query,
-      defaultTimeframeStart: from,
-      defaultTimeframeEnd: to,
-      requestTimeoutMilliseconds: 10000,
-    },
-    { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
-  );
+  let res;
+  try {
+    res = await axios.post(
+      `${DT_ENV_URL}/platform/storage/query/v1/query:execute`,
+      { query, defaultTimeframeStart: from, defaultTimeframeEnd: to },
+      { headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } }
+    );
+  } catch (err) {
+    const body = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+    throw new Error(`DQL execute failed (${err.response?.status ?? 'no response'}): ${body}`);
+  }
 
   if (res.data.state === 'SUCCEEDED') {
     return res.data.result?.records || [];
@@ -172,8 +173,9 @@ async function fetchErrorLogs() {
   const from = lastPollTime;
   const to = new Date().toISOString();
 
-  // Java logs → status "error" | .NET logs → status "fail" or "crit"
-  const query = `fetch logs | filter toLower(status) in ("error", "fail", "crit")`;
+  // Filter on log content directly — avoids uncertainty about how Dynatrace
+  // stores the status field. Java logs contain "level=ERROR", .NET logs contain "fail:"
+  const query = `fetch logs | filter matchesPhrase(content, "level=ERROR") or matchesPhrase(content, "fail:")`;
 
   logger.info(`Dynatrace log poller: querying ERROR logs from ${from} to ${to}`);
   return executeDql(token, query, from, to);
