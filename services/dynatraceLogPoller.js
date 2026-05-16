@@ -75,23 +75,65 @@ async function executeDql(token, query, from, to) {
   throw new Error('DQL query did not complete within 10 seconds');
 }
 
+// ── Log format detection ─────────────────────────────────────────────────────
+
+// Java structured log: "2026-05-16T... level=ERROR service=... msg=..."
+const JAVA_LOG = /\bservice=([a-zA-Z0-9_-]+)/;
+// .NET console log: "fail: Namespace.Class[EventId]"
+const DOTNET_LOG = /^(fail|crit|warn|info|dbug|trce):\s+([\w.]+)\[(\d+)\]/m;
+
+function isJavaLog(logText) { return JAVA_LOG.test(logText); }
+function isDotnetLog(logText) { return DOTNET_LOG.test(logText); }
+
 // ── Log record helpers ───────────────────────────────────────────────────────
 
 function extractServiceFromLog(logText) {
-  const match = logText.match(/service=([a-zA-Z0-9_-]+)/);
-  return match ? match[1] : null;
+  // Java: service=incident-java-exception-service
+  const javaMatch = logText.match(/\bservice=([a-zA-Z0-9_-]+)/);
+  if (javaMatch) return javaMatch[1];
+
+  // .NET: root namespace segment of "Namespace.Class[0]" — e.g. "IncidentDotnetExceptionService"
+  const dotnetMatch = logText.match(DOTNET_LOG);
+  if (dotnetMatch) return dotnetMatch[2].split('.')[0];
+
+  return null;
 }
 
 function extractLoggerFromLog(logText) {
-  const match = logText.match(/logger=([a-zA-Z0-9._-]+)/);
-  if (!match) return null;
-  const parts = match[1].split('.');
-  return parts[parts.length - 1];
+  // Java: logger=com.example.ClassName  →  last segment
+  const javaMatch = logText.match(/\blogger=([a-zA-Z0-9._-]+)/);
+  if (javaMatch) {
+    const parts = javaMatch[1].split('.');
+    return parts[parts.length - 1];
+  }
+
+  // .NET: last segment of the category name — e.g. "IncidentService"
+  const dotnetMatch = logText.match(DOTNET_LOG);
+  if (dotnetMatch) {
+    const parts = dotnetMatch[2].split('.');
+    return parts[parts.length - 1];
+  }
+
+  return null;
 }
 
 function extractErrorFromLog(logText) {
-  const match = logText.match(/(?:error|msg)=(.+)$/m);
-  return match ? match[1].trim() : null;
+  // Java: prefer error= field, fall back to msg=
+  if (isJavaLog(logText)) {
+    const errorMatch = logText.match(/\berror=(.+)$/m);
+    if (errorMatch) return errorMatch[1].trim();
+    const msgMatch = logText.match(/\bmsg=(.+)$/m);
+    if (msgMatch) return msgMatch[1].trim();
+  }
+
+  // .NET: optional message line between the category header and the stack trace
+  // Pattern: "fail: Category[0]\n      <message>\n         at ..."
+  if (isDotnetLog(logText)) {
+    const msgMatch = logText.match(/^(?:fail|crit):\s+[^\n]+\n[ \t]+([^\s\tat][^\n]+)/m);
+    if (msgMatch) return msgMatch[1].trim();
+  }
+
+  return null;
 }
 
 // Map a Grail log record to the incident document schema.
@@ -130,8 +172,8 @@ async function fetchErrorLogs() {
   const from = lastPollTime;
   const to = new Date().toISOString();
 
-  // DQL: fetch only ERROR level logs in the poll window
-  const query = `fetch logs | filter status == "ERROR"`;
+  // Java logs → status "error" | .NET logs → status "fail" or "crit"
+  const query = `fetch logs | filter toLower(status) in ("error", "fail", "crit")`;
 
   logger.info(`Dynatrace log poller: querying ERROR logs from ${from} to ${to}`);
   return executeDql(token, query, from, to);
