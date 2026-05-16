@@ -12,6 +12,12 @@ function extractEntityName(entities, type) {
   return match ? match.name : null;
 }
 
+// Extract service name embedded in log text e.g. "service=incident-java-exception-service"
+function extractServiceFromLog(logText) {
+  const match = logText.match(/service=([a-zA-Z0-9_-]+)/);
+  return match ? match[1] : null;
+}
+
 // Build a tags array regardless of whether Dynatrace sent a string or array.
 function normalizeTags(raw) {
   if (!raw) return [];
@@ -22,14 +28,16 @@ function normalizeTags(raw) {
 function mapToIncidentDocument(payload) {
   const entities = payload.ImpactedEntities || [];
   const tags = normalizeTags(payload.Tags);
+  const logText = payload.ProblemDetailsText || payload.ProblemDetails || '';
 
   const applicationName =
-    extractEntityName(entities, 'SERVICE') ||
-    extractEntityName(entities, 'APPLICATION') ||
-    (Array.isArray(payload.ImpactedEntityNames)
-      ? payload.ImpactedEntityNames[0]
-      : payload.ImpactedEntityNames) ||
-    'unknown';
+  extractServiceFromLog(logText) ||            // ← "incident-java-exception-service"
+  extractEntityName(entities, 'SERVICE') ||
+  extractEntityName(entities, 'APPLICATION') ||
+  (Array.isArray(payload.ImpactedEntityNames)
+    ? payload.ImpactedEntityNames[0]
+    : payload.ImpactedEntityNames) ||
+  'unknown';
 
   const hostName =
     extractEntityName(entities, 'HOST') ||

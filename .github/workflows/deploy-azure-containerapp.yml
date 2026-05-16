@@ -22,6 +22,9 @@ env:
   FUNCTION_APP_URL: ${{ secrets.FUNCTION_APP_URL }}
   FUNCTION_APP_KEY: ${{ secrets.FUNCTION_APP_KEY }}
   DYNATRACE_WEBHOOK_TOKEN: ${{ secrets.DYNATRACE_WEBHOOK_TOKEN }}
+  DT_ENV_URL: ${{ secrets.DT_ENV_URL }}
+  DT_CLIENT_ID: ${{ secrets.DT_CLIENT_ID }}
+  DT_CLIENT_SECRET: ${{ secrets.DT_CLIENT_SECRET }}
 
 jobs:
   deploy:
@@ -64,7 +67,10 @@ jobs:
                 "MONGO_COLLECTION=$MONGO_COLLECTION" \
                 "FUNCTION_APP_URL=$FUNCTION_APP_URL" \
                 "FUNCTION_APP_KEY=$FUNCTION_APP_KEY" \
-                "DYNATRACE_WEBHOOK_TOKEN=$DYNATRACE_WEBHOOK_TOKEN"
+                "DYNATRACE_WEBHOOK_TOKEN=$DYNATRACE_WEBHOOK_TOKEN" \
+                "DT_ENV_URL=$DT_ENV_URL" \
+                "DT_CLIENT_ID=$DT_CLIENT_ID" \
+                "DT_CLIENT_SECRET=$DT_CLIENT_SECRET"
           else
             echo "Updating Container App $APP_NAME..."
             az containerapp update \
@@ -77,7 +83,10 @@ jobs:
                 "MONGO_COLLECTION=$MONGO_COLLECTION" \
                 "FUNCTION_APP_URL=$FUNCTION_APP_URL" \
                 "FUNCTION_APP_KEY=$FUNCTION_APP_KEY" \
-                "DYNATRACE_WEBHOOK_TOKEN=$DYNATRACE_WEBHOOK_TOKEN"
+                "DYNATRACE_WEBHOOK_TOKEN=$DYNATRACE_WEBHOOK_TOKEN" \
+                "DT_ENV_URL=$DT_ENV_URL" \
+                "DT_CLIENT_ID=$DT_CLIENT_ID" \
+                "DT_CLIENT_SECRET=$DT_CLIENT_SECRET"
 
             az containerapp ingress enable \
               --name "$APP_NAME" \
