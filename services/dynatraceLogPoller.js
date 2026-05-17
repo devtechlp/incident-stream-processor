@@ -190,6 +190,8 @@ async function poll() {
   try {
     const records = await fetchErrorLogs();
 
+    logger.info(`Dynatrace log poller: found ${records.length} record(s) from DQL`);
+
     if (records.length === 0) {
       logger.info('Dynatrace log poller: no new ERROR logs');
       lastPollTime = new Date().toISOString();
@@ -201,13 +203,15 @@ async function poll() {
 
     for (const record of records) {
       const doc = mapLogToIncidentDocument(record);
+      logger.info(`Dynatrace log poller: upserting — service: ${doc.applicationName}, occurredAt: ${doc.occurredAt}`);
 
       // Deduplicate: same service + same timestamp won't insert twice
-      await col.updateOne(
+      const result = await col.updateOne(
         { applicationName: doc.applicationName, occurredAt: doc.occurredAt },
         { $setOnInsert: doc },
         { upsert: true }
       );
+      logger.info(`Dynatrace log poller: upsert result — matched: ${result.matchedCount}, upserted: ${result.upsertedCount}`);
     }
 
     logger.info(`Dynatrace log poller: upserted ${records.length} ERROR logs`);
