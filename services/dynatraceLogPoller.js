@@ -173,9 +173,9 @@ async function fetchErrorLogs() {
   const from = lastPollTime;
   const to = new Date().toISOString();
 
-  // contains() does exact substring match — matchesPhrase() does full-text search
-  // and breaks on special characters like "=". Fixing Java only for now.
-  const query = `fetch logs | filter contains(content, "level=ERROR")`;
+  // Timestamp filter must be in the DQL itself — defaultTimeframeStart/End in the
+  // request body only apply to relative DQL expressions (now-1h), not fetch logs.
+  const query = `fetch logs | filter timestamp >= "${from}" and timestamp <= "${to}" | filter contains(content, "level=ERROR")`;
 
   logger.info(`Dynatrace log poller: querying ERROR logs from ${from} to ${to}`);
   return executeDql(token, query, from, to);
@@ -212,18 +212,17 @@ async function poll() {
   }
 }
 
-// Fetch 1 raw log record with no filter and print every field so we can see
-// exactly what Dynatrace stores — helps debug field names and content format.
 async function debugSampleRecord() {
   try {
     const token = await getOAuthToken();
     const to = new Date().toISOString();
-    const from = new Date(Date.now() - 10 * 60 * 1000).toISOString(); // last 10 min
-    const records = await executeDql(token, `fetch logs | limit 1`, from, to);
+    const from = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    const query = `fetch logs | filter timestamp >= "${from}" and timestamp <= "${to}" | limit 1`;
+    const records = await executeDql(token, query, from, to);
     if (records.length === 0) {
       logger.info('Dynatrace log poller [debug]: no records found in last 10 minutes');
     } else {
-      logger.info(`Dynatrace log poller [debug] sample record fields:\n${JSON.stringify(records[0], null, 2)}`);
+      logger.info(`Dynatrace log poller [debug] sample record:\n${JSON.stringify(records[0], null, 2)}`);
     }
   } catch (err) {
     logger.error(`Dynatrace log poller [debug] failed: ${err.message}`);
