@@ -236,6 +236,7 @@ function start() {
   }
   logger.info('Dynatrace log poller started (Grail / DQL mode)');
   debugSampleRecord();
+  setInterval(debugSampleRecord, 5 * 60 * 1000); // repeat every 5 min until we see a record
   poll();
   setInterval(poll, POLL_INTERVAL_MS);
 }
