@@ -173,9 +173,9 @@ async function fetchErrorLogs() {
   const from = lastPollTime;
   const to = new Date().toISOString();
 
-  // Timestamp filter must be in the DQL itself — defaultTimeframeStart/End in the
-  // request body only apply to relative DQL expressions (now-1h), not fetch logs.
-  const query = `fetch logs | filter timestamp >= "${from}" and timestamp <= "${to}" | filter contains(content, "level=ERROR")`;
+  // Time range goes on the fetch command itself — DQL timestamp field is a datetime
+  // type, string comparison in filter silently returns nothing.
+  const query = `fetch logs, from: "${from}", to: "${to}" | filter contains(content, "level=ERROR")`;
 
   logger.info(`Dynatrace log poller: querying ERROR logs from ${from} to ${to}`);
   return executeDql(token, query, from, to);
@@ -217,7 +217,7 @@ async function debugSampleRecord() {
     const token = await getOAuthToken();
     const to = new Date().toISOString();
     const from = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-    const query = `fetch logs | filter timestamp >= "${from}" and timestamp <= "${to}" | limit 1`;
+    const query = `fetch logs, from: "${from}", to: "${to}" | limit 1`;
     const records = await executeDql(token, query, from, to);
     if (records.length === 0) {
       logger.info('Dynatrace log poller [debug]: no records found in last 10 minutes');
