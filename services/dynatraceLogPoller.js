@@ -175,15 +175,16 @@ function mapLogToIncidentDocument(record) {
 
 async function fetchErrorLogs() {
   const token = await getOAuthToken();
-  const from = lastPollTime;
-  const to = new Date().toISOString();
 
-  // Time range goes on the fetch command itself — DQL timestamp field is a datetime
-  // type, string comparison in filter silently returns nothing.
-  const query = `fetch logs, from: "${from}", to: "${to}" | filter contains(content, "level=ERROR")`;
+  // No time range in DQL — Grail's from:/to: syntax doesn't reliably bound the window.
+  // Fetch latest 100 ERROR logs and filter by lastPollTime in JS instead.
+  const query = `fetch logs | filter contains(content, "level=ERROR") | sort timestamp desc | limit 100`;
 
-  logger.info(`Dynatrace log poller: querying ERROR logs from ${from} to ${to}`);
-  return executeDql(token, query, from, to);
+  logger.info(`Dynatrace log poller: querying ERROR logs since ${lastPollTime}`);
+  const records = await executeDql(token, query, null, null);
+
+  // Keep only records newer than the last poll — MongoDB deduplication handles edge cases
+  return records.filter((r) => new Date(r.timestamp) > new Date(lastPollTime));
 }
 
 async function poll() {
