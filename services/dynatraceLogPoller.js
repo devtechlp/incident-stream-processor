@@ -212,12 +212,31 @@ async function poll() {
   }
 }
 
+// Fetch 1 raw log record with no filter and print every field so we can see
+// exactly what Dynatrace stores — helps debug field names and content format.
+async function debugSampleRecord() {
+  try {
+    const token = await getOAuthToken();
+    const to = new Date().toISOString();
+    const from = new Date(Date.now() - 10 * 60 * 1000).toISOString(); // last 10 min
+    const records = await executeDql(token, `fetch logs | limit 1`, from, to);
+    if (records.length === 0) {
+      logger.info('Dynatrace log poller [debug]: no records found in last 10 minutes');
+    } else {
+      logger.info(`Dynatrace log poller [debug] sample record fields:\n${JSON.stringify(records[0], null, 2)}`);
+    }
+  } catch (err) {
+    logger.error(`Dynatrace log poller [debug] failed: ${err.message}`);
+  }
+}
+
 function start() {
   if (!DT_ENV_URL || !DT_CLIENT_ID || !DT_CLIENT_SECRET) {
     logger.warn('Dynatrace log poller: DT_ENV_URL / DT_CLIENT_ID / DT_CLIENT_SECRET not set — poller disabled');
     return;
   }
   logger.info('Dynatrace log poller started (Grail / DQL mode)');
+  debugSampleRecord();
   poll();
   setInterval(poll, POLL_INTERVAL_MS);
 }
