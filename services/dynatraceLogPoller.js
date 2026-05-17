@@ -215,17 +215,29 @@ async function poll() {
 async function debugSampleRecord() {
   try {
     const token = await getOAuthToken();
-    const to = new Date().toISOString();
-    const from = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-    const query = `fetch logs, from: "${from}", to: "${to}" | limit 1`;
-    const records = await executeDql(token, query, from, to);
-    if (records.length === 0) {
-      logger.info('Dynatrace log poller [debug]: no records found in last 10 minutes');
+
+    // Test 1 — absolute simplest DQL, no time range, no filter
+    logger.info('Dynatrace log poller [debug]: trying fetch logs | limit 1 ...');
+    const r1 = await executeDql(token, `fetch logs | limit 1`, null, null);
+    if (r1.length > 0) {
+      logger.info(`Dynatrace log poller [debug] fetch logs | limit 1 result:\n${JSON.stringify(r1[0], null, 2)}`);
+      return;
+    }
+    logger.info('Dynatrace log poller [debug]: fetch logs | limit 1 returned nothing — trying classic API ...');
+
+    // Test 2 — classic /api/v2/logs/search with Bearer token (fallback)
+    const res = await axios.get(`${DT_ENV_URL}/api/v2/logs/search`, {
+      params: { limit: 1 },
+      headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+    });
+    if (res.data?.results?.length > 0) {
+      logger.info(`Dynatrace log poller [debug] classic API result:\n${JSON.stringify(res.data.results[0], null, 2)}`);
     } else {
-      logger.info(`Dynatrace log poller [debug] sample record:\n${JSON.stringify(records[0], null, 2)}`);
+      logger.info('Dynatrace log poller [debug]: classic API also returned nothing');
     }
   } catch (err) {
-    logger.error(`Dynatrace log poller [debug] failed: ${err.message}`);
+    const body = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+    logger.error(`Dynatrace log poller [debug] failed (${err.response?.status ?? 'no response'}): ${body}`);
   }
 }
 
