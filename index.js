@@ -3,18 +3,18 @@ const express = require('express');
 const { connectDB } = require('./config/db');
 const { startChangeStream } = require('./listener/changeStream');
 const dynatraceWebhook = require('./webhook/dynatraceWebhook');
-const dynatraceLogPoller = require('./services/dynatraceLogPoller');
+const logIngestWebhook = require('./webhook/logIngestWebhook');
 const logger = require('./utils/logger');
 
 async function main() {
   try {
     await connectDB();
     await startChangeStream();
-    dynatraceLogPoller.start();
 
     const app = express();
     app.use(express.json());
     app.use('/api/dynatrace', dynatraceWebhook);
+    app.use('/api/logs', logIngestWebhook);
 
     app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 
