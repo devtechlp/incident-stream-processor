@@ -173,9 +173,9 @@ async function fetchErrorLogs() {
   const from = lastPollTime;
   const to = new Date().toISOString();
 
-  // Filter on log content directly — avoids uncertainty about how Dynatrace
-  // stores the status field. Java logs contain "level=ERROR", .NET logs contain "fail:"
-  const query = `fetch logs | filter matchesPhrase(content, "level=ERROR") or matchesPhrase(content, "fail:")`;
+  // contains() does exact substring match — matchesPhrase() does full-text search
+  // and breaks on special characters like "=". Fixing Java only for now.
+  const query = `fetch logs | filter contains(content, "level=ERROR")`;
 
   logger.info(`Dynatrace log poller: querying ERROR logs from ${from} to ${to}`);
   return executeDql(token, query, from, to);
