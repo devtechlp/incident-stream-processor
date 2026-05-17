@@ -17,19 +17,24 @@ let tokenExpiresAt = 0;
 async function getOAuthToken() {
   if (cachedToken && Date.now() < tokenExpiresAt) return cachedToken;
 
-  const res = await axios.post(
-    'https://sso.dynatrace.com/sso/oauth2/token',
-    new URLSearchParams({
-      grant_type: 'client_credentials',
-      client_id: DT_CLIENT_ID,
-      client_secret: DT_CLIENT_SECRET,
-      scope: 'storage:logs:read',
-    }).toString(),
-    { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
-  );
+  let res;
+  try {
+    res = await axios.post(
+      'https://sso.dynatrace.com/sso/oauth2/token',
+      new URLSearchParams({
+        grant_type: 'client_credentials',
+        client_id: DT_CLIENT_ID,
+        client_secret: DT_CLIENT_SECRET,
+        scope: 'storage:logs:read storage:buckets:read',
+      }).toString(),
+      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+    );
+  } catch (err) {
+    const body = err.response?.data ? JSON.stringify(err.response.data) : err.message;
+    throw new Error(`OAuth token request failed (${err.response?.status ?? 'no response'}): ${body} — check DT_CLIENT_ID and DT_CLIENT_SECRET`);
+  }
 
   cachedToken = res.data.access_token;
-  // Refresh 30 s before actual expiry to avoid using a stale token
   tokenExpiresAt = Date.now() + (res.data.expires_in - 30) * 1000;
   logger.info('Dynatrace log poller: OAuth token refreshed');
   return cachedToken;
