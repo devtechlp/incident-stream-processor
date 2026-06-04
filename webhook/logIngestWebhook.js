@@ -27,7 +27,7 @@ function mapToIncidentDocument(event) {
     stackTrace:       logText,
     causedByChain:    [extractErrorFromLog(logText) || ''],
     context: {
-      source:        'log-forwarder',
+      source:        'dynatrace-log-forwarder',
       cloudProvider: event['cloud.provider'] || '',
       cloudPlatform: event['cloud.platform'] || '',
       logSource:     event['log.source'] || '',
@@ -38,7 +38,8 @@ function mapToIncidentDocument(event) {
   };
 }
 
-// Accepts the same array payload the log forwarder already sends to Dynatrace
+// Legacy direct ingest — not used when Dynatrace poller path is active.
+// Accepts the same array payload dynatrace-log-forwarder sends to Dynatrace.
 router.post('/ingest', async (req, res) => {
   const events = Array.isArray(req.body) ? req.body : [req.body];
 

@@ -5,7 +5,7 @@
 set -e
 
 # ── Config — change these ─────────────────────────────────────────────────────
-RESOURCE_GROUP="incident-agent-rg"
+RESOURCE_GROUP="rg-freight-planning"
 LOCATION="eastus"
 ACR_NAME="incidentagentacr"          # must be globally unique, lowercase, no hyphens
 CONTAINER_NAME="incident-stream-processor"

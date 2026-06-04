@@ -1,7 +1,7 @@
 {
   "name": "incident-stream-processor",
   "version": "1.0.0",
-  "description": "MongoDB change stream listener — forwards incidents to the incident-agent Function App",
+  "description": "MongoDB change stream listener — forwards incidents to incident-remediation-agent",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"

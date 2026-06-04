@@ -8,9 +8,10 @@ const DT_ENV_URL       = process.env.DT_ENV_URL;
 const DT_CLIENT_ID     = process.env.DT_CLIENT_ID;
 const DT_CLIENT_SECRET = process.env.DT_CLIENT_SECRET;
 const POLL_INTERVAL_MS = 60 * 1000;
+const CHECKPOINT_LOOKBACK_MS = parseInt(process.env.POLLER_CHECKPOINT_LOOKBACK_MS || '', 10) || 15 * 60 * 1000;
 const MONGO_COLLECTION = process.env.MONGO_COLLECTION;
 
-// Azure Blob Storage checkpoint — same pattern as logForwarder
+// Azure Blob Storage checkpoint — same pattern as dynatrace-log-forwarder
 const CHECKPOINT_CONNECTION = process.env.CHECKPOINT_STORAGE_CONNECTION_STRING;
 const CHECKPOINT_CONTAINER  = process.env.CHECKPOINT_CONTAINER  || 'dynatrace-poller-checkpoints';
 const CHECKPOINT_BLOB       = process.env.CHECKPOINT_BLOB       || 'checkpoint.json';
@@ -62,9 +63,9 @@ async function readCheckpoint() {
     logger.info(`Dynatrace log poller: checkpoint read — lastProcessedTime: ${parsed.lastProcessedTime}`);
     return parsed.lastProcessedTime;
   } catch {
-    // No checkpoint yet — default to 1 poll interval ago
-    const fallback = new Date(Date.now() - POLL_INTERVAL_MS).toISOString();
-    logger.info(`Dynatrace log poller: no checkpoint found, defaulting to ${fallback}`);
+    // No checkpoint yet — look back far enough to catch recent errors (Grail ingest delay)
+    const fallback = new Date(Date.now() - CHECKPOINT_LOOKBACK_MS).toISOString();
+    logger.info(`Dynatrace log poller: no checkpoint found, defaulting to ${fallback} (${CHECKPOINT_LOOKBACK_MS / 1000}s lookback)`);
     return fallback;
   }
 }
@@ -120,6 +121,9 @@ async function executeDql(token, query) {
 function extractServiceFromLog(logText) {
   const javaMatch = logText.match(/\bservice=([a-zA-Z0-9_-]+)/);
   if (javaMatch) return javaMatch[1];
+  // Spring Boot default pattern: ... ERROR ... [freight-planning-admin-service] ...
+  const springMatch = logText.match(/\[([a-zA-Z0-9_-]+)\]\s*\[/);
+  if (springMatch) return springMatch[1];
   const dotnetMatch = logText.match(/^(fail|crit):\s+([\w.]+)\[/m);
   if (dotnetMatch) return dotnetMatch[2].split('.')[0];
   return null;
@@ -164,9 +168,19 @@ async function poll() {
     const lastProcessedTime = await readCheckpoint();
     const token             = await getOAuthToken();
 
-    // No time range in DQL — filter by timestamp in JS after fetch
-    // Avoids the DQL from:/to: syntax issues we hit before
-    const query   = `fetch logs | filter contains(content, "level=ERROR") | sort timestamp asc | limit 100`;
+    // Structured Java (level=ERROR), Spring Boot (" ERROR "), .NET (fail:/crit:)
+    const query = [
+      'fetch logs',
+      '| filter contains(content, "level=ERROR")',
+      '  or contains(content, "level=error")',
+      '  or contains(content, " ERROR ")',
+      '  or contains(content, "level=CRITICAL")',
+      '  or contains(content, "level=FATAL")',
+      '  or startsWith(content, "fail:")',
+      '  or startsWith(content, "crit:")',
+      '| sort timestamp asc',
+      '| limit 100',
+    ].join(' ');
     const records = await executeDql(token, query);
 
     logger.info(`Dynatrace log poller: DQL returned ${records.length} record(s)`);

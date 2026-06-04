@@ -1,6 +1,21 @@
 # incident-stream-processor
 
-Node.js worker that watches a MongoDB collection with a **change stream**, then **POST**s each new or updated document to the **incident-agent** Azure Function (`processIncident` HTTP trigger). It sits between your services that write error logs to Mongo and the agent that triages them.
+Node.js worker that watches a MongoDB collection with a **change stream**, then **POST**s each new or updated document to the **incident-remediation-agent** Azure Function (`processIncident` HTTP trigger). It sits between Dynatrace/Mongo incident documents and the agent that triages them.
+
+## Pipeline (current stack)
+
+```
+Container Apps → Log Analytics
+      → dynatrace-log-forwarder (func-logfwd-python, Python)
+      → Dynatrace Grail
+      → incident-stream-processor (Dynatrace DQL poller + change stream)
+      → incident-remediation-agent
+      → GitHub PR / Issue
+```
+
+The Node **`logForwarder`** project is **not used**. Logs enter Dynatrace via **`dynatrace-log-forwarder`** instead.
+
+Alternative path: Dynatrace problem webhook → `POST /api/dynatrace/webhook` on this service.
 
 ## Flow
 
@@ -13,7 +28,7 @@ Node.js worker that watches a MongoDB collection with a **change stream**, then 
 
 - **Node.js** 18+ locally (the container image uses Node 22).
 - **MongoDB** with change streams enabled (typically a **replica set**, including MongoDB Atlas).
-- **Azure Function App** URL and host key for the incident-agent `processIncident` endpoint.
+- **Azure Function App** URL and host key for **incident-remediation-agent** `processIncident` endpoint (not the retired `incident-agent` app).
 
 ## Configuration
 
@@ -47,6 +62,27 @@ docker run --rm -e MONGO_URI="..." -e MONGO_DB_NAME="..." -e MONGO_COLLECTION=".
 ```
 
 ## Deploy (Azure Container Apps)
+
+### Manual deploy from local (Windows)
+
+```powershell
+cd C:\SolEng\POC\incident-stream-processor
+
+.\deploy-local.ps1 `
+  -MongoUri "mongodb+srv://..." `
+  -DtEnvUrl "https://your-env.apps.dynatrace.com" `
+  -DtClientId "dt0s02...." `
+  -DtClientSecret "dt0s02...."
+```
+
+`deploy-local.ps1` defaults to **`rg-freight-planning`**, **`acrfreightplanning`**, **`cae-freight-planning`**, and **`incident-stream-proc`**. It auto-resolves `FUNCTION_APP_URL`, `FUNCTION_APP_KEY` (from **incident-remediation-agent-fn**), and checkpoint storage (from **stincidentremediation**) unless you pass them explicitly.
+
+| Switch | Purpose |
+|--------|---------|
+| `-SkipBuild` | Update env vars / image tag only (image must already exist in ACR) |
+| `-SkipInfrastructure` | Skip RG / ACR / environment existence checks |
+
+### GitHub Actions (CI/CD)
 
 GitHub Actions workflow: `.github/workflows/deploy-azure-containerapp.yml`.
 
@@ -89,4 +125,4 @@ Same names as environment variables above.
 
 ## Full pipeline documentation
 
-End-to-end flow (this worker plus **incident-agent**), naming, and `healingStatus` lifecycle: if you keep both repos as siblings under the same parent folder, see **`../incident-agent/docs/INCIDENT_REMEDIATION_PIPELINE.md`**. Otherwise open that path in the **incident-agent** repository.
+End-to-end flow (this worker plus **incident-remediation-agent**): see **`../incident-remediation-agent/README.md`** and **`../incident-remediation-agent/DEPLOYMENT.md`**. The legacy **`incident-agent`** app is retired — do not point `FUNCTION_APP_URL` at it.
