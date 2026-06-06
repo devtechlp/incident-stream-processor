@@ -249,13 +249,14 @@ async function poll() {
     const lastProcessedTime = await readCheckpoint();
     const token             = await getOAuthToken();
 
-    // Fix 1: filter on loglevel (Dynatrace maps status:"error" → loglevel:"ERROR")
-    // and scope to python-log-forwarder to avoid noise from other log sources.
-    const lookbackMinutes = Math.ceil(CHECKPOINT_LOOKBACK_MS / 60000);
+    // Use checkpoint time as DQL `from` so no logs are missed during gaps or
+    // restarts. Dynatrace Grail loglevel is always "INFO" for custom-ingested
+    // logs regardless of status field — filter on isNotNull(exception) instead,
+    // since the forwarder only sets that field for actual stack-trace errors.
     const query = [
-      `fetch logs, from: now()-${lookbackMinutes}m`,
-      '| filter loglevel == "ERROR"',
-      '| filter `log.source` == "python-log-forwarder"',
+      `fetch logs, from: "${lastProcessedTime}"`,
+      '| filter `service.name` == "freight-planning-admin-service"',
+      '| filter isNotNull(exception)',
       '| sort timestamp asc',
       '| limit 100',
     ].join('\n');
