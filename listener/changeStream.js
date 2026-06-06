@@ -5,6 +5,21 @@ const { formatAxiosError } = require('../publisher/httpPublisher');
 
 let resumeToken = null;
 
+// Deduplicates change events that MongoDB occasionally fires twice for the same
+// oplog entry (e.g. during replica set elections or network retries).
+// Keyed by the stringified resume token; capped at 200 entries.
+const seenTokens = new Set();
+
+function isDuplicate(changeId) {
+  const key = JSON.stringify(changeId);
+  if (seenTokens.has(key)) return true;
+  seenTokens.add(key);
+  if (seenTokens.size > 200) {
+    seenTokens.delete(seenTokens.values().next().value);
+  }
+  return false;
+}
+
 async function startChangeStream() {
   const db = await getDB();
   const collection = db.collection(process.env.MONGO_COLLECTION);
@@ -26,6 +41,8 @@ async function startChangeStream() {
   changeStream.on('change', async (change) => {
     // Persist resume token so a restart doesn't miss events
     resumeToken = change._id;
+
+    if (isDuplicate(change._id)) return;
 
     logger.info(`Change detected: ${change.operationType} — id: ${change.documentKey?._id}`);
 
