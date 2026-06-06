@@ -255,7 +255,7 @@ async function poll() {
     // since the forwarder only sets that field for actual stack-trace errors.
     const query = [
       `fetch logs, from: "${lastProcessedTime}"`,
-      '| filter `service.name` == "freight-planning-admin-service"',
+      '| filter (`service.name` == "freight-planning-admin-service" or `service.name` == "freight-planning-transaction-service")',
       '| filter isNotNull(exception)',
       '| sort timestamp asc',
       '| limit 100',
