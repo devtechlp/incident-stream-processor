@@ -11,10 +11,9 @@ const POLL_INTERVAL_MS = 60 * 1000;
 const CHECKPOINT_LOOKBACK_MS = parseInt(process.env.POLLER_CHECKPOINT_LOOKBACK_MS || '', 10) || 15 * 60 * 1000;
 const MONGO_COLLECTION = process.env.MONGO_COLLECTION;
 
-// Azure Blob Storage checkpoint — same pattern as dynatrace-log-forwarder
 const CHECKPOINT_CONNECTION = process.env.CHECKPOINT_STORAGE_CONNECTION_STRING;
-const CHECKPOINT_CONTAINER  = process.env.CHECKPOINT_CONTAINER  || 'dynatrace-poller-checkpoints';
-const CHECKPOINT_BLOB       = process.env.CHECKPOINT_BLOB       || 'checkpoint.json';
+const CHECKPOINT_CONTAINER  = process.env.CHECKPOINT_CONTAINER || 'dynatrace-poller-checkpoints';
+const CHECKPOINT_BLOB       = process.env.CHECKPOINT_BLOB      || 'checkpoint.json';
 
 // ── OAuth token (cached until 30s before expiry) ──────────────────────────────
 let cachedToken    = null;
@@ -60,12 +59,11 @@ async function readCheckpoint() {
     const chunks     = [];
     for await (const chunk of download.readableStreamBody) chunks.push(chunk);
     const parsed = JSON.parse(Buffer.concat(chunks).toString());
-    logger.info(`Dynatrace log poller: checkpoint read — lastProcessedTime: ${parsed.lastProcessedTime}`);
+    logger.info(`Dynatrace log poller: checkpoint read — ${parsed.lastProcessedTime}`);
     return parsed.lastProcessedTime;
   } catch {
-    // No checkpoint yet — look back far enough to catch recent errors (Grail ingest delay)
     const fallback = new Date(Date.now() - CHECKPOINT_LOOKBACK_MS).toISOString();
-    logger.info(`Dynatrace log poller: no checkpoint found, defaulting to ${fallback} (${CHECKPOINT_LOOKBACK_MS / 1000}s lookback)`);
+    logger.info(`Dynatrace log poller: no checkpoint, defaulting to ${fallback}`);
     return fallback;
   }
 }
@@ -73,9 +71,10 @@ async function readCheckpoint() {
 async function writeCheckpoint(timestamp) {
   try {
     const blobClient = getBlobClient();
-    const data       = Buffer.from(JSON.stringify({ lastProcessedTime: timestamp }));
-    await blobClient.getContainerClient?.createIfNotExists?.();
-    await blobClient.uploadData(data, { overwrite: true });
+    await blobClient.uploadData(
+      Buffer.from(JSON.stringify({ lastProcessedTime: timestamp })),
+      { overwrite: true }
+    );
     logger.info(`Dynatrace log poller: checkpoint updated — ${timestamp}`);
   } catch (err) {
     logger.error(`Dynatrace log poller: failed to write checkpoint — ${err.message}`);
@@ -97,11 +96,9 @@ async function executeDql(token, query) {
     throw new Error(`DQL execute failed (${err.response?.status ?? 'no response'}): ${body}`);
   }
 
-  if (res.data.state === 'SUCCEEDED') {
-    return res.data.result?.records || [];
-  }
+  if (res.data.state === 'SUCCEEDED') return res.data.result?.records || [];
 
-  // Async path — poll until SUCCEEDED or terminal state
+  // Async path — poll until complete
   const requestToken = res.data.requestToken;
   for (let attempt = 0; attempt < 10; attempt++) {
     await new Promise(r => setTimeout(r, 1000));
@@ -117,209 +114,132 @@ async function executeDql(token, query) {
   throw new Error('DQL query did not complete within 10 seconds');
 }
 
-// ── Log record helpers ────────────────────────────────────────────────────────
-function extractServiceFromLog(logText) {
-  const javaMatch = logText.match(/\bservice=([a-zA-Z0-9_-]+)/);
-  if (javaMatch) return javaMatch[1];
-  // Spring Boot default pattern: ... ERROR ... [freight-planning-admin-service] ...
-  const springMatch = logText.match(/\[([a-zA-Z0-9_-]+)\]\s*\[/);
-  if (springMatch) return springMatch[1];
-  const dotnetMatch = logText.match(/^(fail|crit):\s+([\w.]+)\[/m);
-  if (dotnetMatch) return dotnetMatch[2].split('.')[0];
-  return null;
-}
-
-function extractErrorFromLog(logText) {
-  const errorMatch = logText.match(/\berror=(.+)$/m);
-  if (errorMatch) return errorMatch[1].trim();
-  const msgMatch = logText.match(/\bmsg=(.+)$/m);
-  if (msgMatch) return msgMatch[1].trim();
-  const dotnetMsg = logText.match(/^(?:fail|crit):\s+[^\n]+\n[ \t]+([^\s\tat][^\n]+)/m);
-  if (dotnetMsg) return dotnetMsg[1].trim();
-  return null;
-}
-
 // ── Error signature for deduplication ────────────────────────────────────────
-// Extract a unique signature for this error: exceptionType + file:line
-// Used to deduplicate incidents - same bug should create ONE incident, not many
-function extractErrorSignature(logText) {
-  // Extract exception type
+// Uses content (message) for exception type + exception (stack trace) for file:line.
+// Same bug at the same location always produces the same key → one incident per bug.
+function extractErrorSignature(content, exceptionText) {
+  const forType     = `${content || ''} ${exceptionText || ''}`;
+  const forLocation = exceptionText || content || '';
+
   let exceptionType = 'UnknownException';
-  
-  // Java: java.lang.NullPointerException or NullPointerException
-  const javaException = logText.match(/\b([A-Z]\w+(?:Exception|Error))\b/);
-  if (javaException) {
-    exceptionType = javaException[1];
-  }
-  
-  // .NET: System.NullReferenceException
-  const dotnetException = logText.match(/\b(System\.\w+(?:Exception))\b/);
-  if (dotnetException) {
-    exceptionType = dotnetException[1].split('.').pop();
-  }
-  
-  // Extract failing file + line from first app stack trace
+
+  const javaEx = forType.match(/\b([A-Z]\w+(?:Exception|Error))\b/);
+  if (javaEx) exceptionType = javaEx[1];
+
+  const dotnetEx = forType.match(/\b(System\.\w+Exception)\b/);
+  if (dotnetEx) exceptionType = dotnetEx[1].split('.').pop();
+
   let failingLocation = '';
-  
-  // Java: at com.freightplanning.admin.service.DriverService.method(DriverService.java:135)
-  const javaFrame = logText.match(/\bat\s+([\w$.]+)\(([\w]+\.java):(\d+)\)/);
-  if (javaFrame) {
-    // Skip JDK/framework frames
-    const fullClass = javaFrame[1];
-    if (!/^(java\.|javax\.|sun\.|com\.sun\.|org\.springframework\.|org\.apache\.)/.test(fullClass)) {
-      const fileName = javaFrame[2];
-      const lineNumber = javaFrame[3];
-      failingLocation = `${fileName}:${lineNumber}`;
+
+  // Java: find first non-framework frame
+  const javaFrames = [...forLocation.matchAll(/\bat\s+([\w$.]+)\(([\w]+\.java):(\d+)\)/g)];
+  for (const frame of javaFrames) {
+    if (!/^(java\.|javax\.|sun\.|com\.sun\.|org\.springframework\.|org\.apache\.)/.test(frame[1])) {
+      failingLocation = `${frame[2]}:${frame[3]}`;
+      break;
     }
   }
-  
-  // .NET: at Namespace.Class.Method() in /path/File.cs:line 42
+
+  // .NET
   if (!failingLocation) {
-    const dotnetFrame = logText.match(/\bat\s+(.+?)\s+in\s+(.+\.cs):line\s+(\d+)/i);
+    const dotnetFrame = forLocation.match(/\bat\s+.+?\s+in\s+(.+\.cs):line\s+(\d+)/i);
     if (dotnetFrame) {
-      const filePath = dotnetFrame[2];
-      const fileName = filePath.split(/[\\/]/).pop();
-      const lineNumber = dotnetFrame[3];
-      failingLocation = `${fileName}:${lineNumber}`;
+      failingLocation = `${dotnetFrame[1].split(/[\\/]/).pop()}:${dotnetFrame[2]}`;
     }
   }
-  
-  // Python: File "/path/file.py", line 42
+
+  // Python — use last frame (actual crash site)
   if (!failingLocation) {
-    const pythonFrames = [...logText.matchAll(/File "(.+\.py)", line (\d+)/g)];
-    if (pythonFrames.length > 0) {
-      // Use last frame (actual crash site)
-      const lastFrame = pythonFrames[pythonFrames.length - 1];
-      const filePath = lastFrame[1];
-      const fileName = filePath.split(/[\\/]/).pop();
-      const lineNumber = lastFrame[2];
-      failingLocation = `${fileName}:${lineNumber}`;
+    const pyFrames = [...forLocation.matchAll(/File "(.+\.py)", line (\d+)/g)];
+    if (pyFrames.length > 0) {
+      const last = pyFrames[pyFrames.length - 1];
+      failingLocation = `${last[1].split(/[\\/]/).pop()}:${last[2]}`;
     }
   }
-  
-  // If we couldn't extract location, use first line of error message as fallback
+
   if (!failingLocation) {
-    const firstLine = logText.split('\n')[0].substring(0, 100);
-    failingLocation = firstLine.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 50);
+    failingLocation = (content || '').substring(0, 80).replace(/[^a-zA-Z0-9]/g, '_');
   }
-  
+
   return `${exceptionType}:${failingLocation}`;
 }
 
-// ── Incident filtering ───────────────────────────────────────────────────────
-// Returns true if this error represents a business/validation exception (4xx)
-// that should NOT create an incident. Only 5xx server errors create incidents.
-// 
-// GENERIC APPROACH: Uses HTTP status codes - works for ANY application.
-// - 4xx (400-499) = Client/Business error = Skip (validation, not found, etc.)
-// - 5xx (500-599) = Server error = Create incident (bugs, crashes, etc.)
-// - No status code = Create incident (safer default for unexpected formats)
-function isExpectedException(logText) {
-  if (!logText) return false;
-  
-  // Try to extract HTTP status code from various log formats
-  // Supports: Spring Boot, .NET, Python Flask/Django, Node.js Express, etc.
-  
+// ── Incident filtering ────────────────────────────────────────────────────────
+// Returns true for business/validation exceptions (4xx) that should NOT create
+// incidents. Only 5xx / unhandled exceptions with stack traces create incidents.
+function isExpectedException(content, exceptionText) {
+  const fullText = `${content || ''} ${exceptionText || ''}`;
+  if (!fullText.trim()) return false;
+
+  // HTTP status code takes priority
   const statusPatterns = [
-    // Spring Boot: "Status: 404" or "status=404" or "status code: 404"
     /\b(?:status|Status|STATUS)[\s:=]+(\d{3})\b/i,
-    // .NET: "StatusCode: 404" or "Status Code: 404"
     /\bStatus\s*Code[\s:=]+(\d{3})\b/i,
-    // Generic: "404 Not Found" or "Error 404" at line start
-    /^(?:Error\s+)?(\d{3})\s+(?:Error|Not Found|Bad Request|Internal Server|Service Unavailable)/im,
-    // ResponseEntity/HttpStatus in logs: "returning status 404"
+    /^(?:Error\s+)?(\d{3})\s+(?:Error|Not Found|Bad Request|Unauthorized|Forbidden)/im,
     /\breturning\s+(?:status\s+)?(\d{3})\b/i,
   ];
-  
+
   for (const pattern of statusPatterns) {
-    const match = logText.match(pattern);
+    const match = fullText.match(pattern);
     if (match) {
-      const statusCode = parseInt(match[1], 10);
-      
-      // Validate it's a real HTTP status code
-      if (statusCode >= 100 && statusCode < 600) {
-        // 4xx = Client/Business error = Skip
-        if (statusCode >= 400 && statusCode < 500) {
-          return true;
-        }
-        // 5xx = Server error = Create incident
-        if (statusCode >= 500 && statusCode < 600) {
-          return false;
-        }
-      }
+      const code = parseInt(match[1], 10);
+      if (code >= 400 && code < 500) return true;   // 4xx → skip
+      if (code >= 500 && code < 600) return false;  // 5xx → incident
     }
   }
-  
-  // No status code found - check for explicit error responses without stack traces
-  // These are typically handled business exceptions that return clean error messages
-  const hasStackTrace = /\s+at\s+[\w$.]+\([^)]+\)/.test(logText) || 
-                        /\s+in\s+.+\.cs:line\s+\d+/i.test(logText) ||
-                        /File\s+".+\.py",\s+line\s+\d+/.test(logText);
-  
-  // If it has a stack trace but no status code, it's likely an unhandled exception
-  // Let it create an incident (safer default)
-  if (hasStackTrace) {
-    return false;
-  }
-  
-  // No status code, no stack trace - might be a logged business error message
-  // Check if it looks like a business error (has error keywords but structured)
-  const businessErrorIndicators = [
-    /\b(?:not found|already exists|invalid|required|forbidden|unauthorized)\b/i,
-  ];
-  
-  // If it looks like a business error message (no stack trace), skip it
-  if (businessErrorIndicators.some(pattern => pattern.test(logText))) {
-    return true;
-  }
-  
-  // Default: create incident (safer for unexpected log formats)
-  return false;
+
+  // Exception text (stack trace) means it's an unhandled server error → incident
+  const hasStackTrace = /\s+at\s+[\w$.]+\([^)]+\)/.test(exceptionText || '') ||
+                        /\s+in\s+.+\.cs:line\s+\d+/i.test(exceptionText || '') ||
+                        /File\s+".+\.py",\s+line\s+\d+/.test(exceptionText || '');
+  if (hasStackTrace) return false;
+
+  // No stack trace — business error keyword in the message only
+  return /\b(?:not found|already exists|invalid|required|forbidden|unauthorized)\b/i.test(content || '');
 }
 
+// ── Incident document mapping ─────────────────────────────────────────────────
 function mapToIncidentDocument(record) {
-  const logText = record.content || '';
-  const serviceName = extractServiceFromLog(logText) || record['service.name'] || 'unknown';
-  const errorSignature = extractErrorSignature(logText);
-  
+  // content  = human-readable error message (from logback message field)
+  // exception = full Java stack trace (from logback exception field)
+  const content       = record.content   || '';
+  const exceptionText = record.exception || '';
+
+  // service.name is a direct structured field set by the log forwarder
+  const serviceName    = record['service.name'] || 'unknown';
+  const errorSignature = extractErrorSignature(content, exceptionText);
+
   return {
-    // Sortable incident ID: timestamp + random (ensures uniqueness and sortability)
     incidentId:       `${Date.now()}-${Math.floor(Math.random() * 10000).toString().padStart(4, '0')}`,
-    
-    // Trace ID from application logs (for correlation)
     traceId:          record['dt.trace_id'] || record['trace_id'] || record['trace.id'] || null,
-    
-    // Service and error details
-    serviceName:      serviceName,
-    applicationName:  serviceName,  // Keep for backward compatibility
+    spanId:           record['span_id'] || null,
+    serviceName,
+    applicationName:  serviceName,
     hostName:         record['host.name'] || 'unknown',
     pid:              0,
-    exceptionType:    errorSignature.split(':')[0] || 'UnhandledException',  // Extract from error signature
-    exceptionMessage: extractErrorFromLog(logText) || logText.substring(0, 200),
-    stackTrace:       logText,
-    causedByChain:    [extractErrorFromLog(logText) || ''],
-    
-    // Context and metadata
+    exceptionType:    errorSignature.split(':')[0] || 'UnhandledException',
+    exceptionMessage: content,
+    stackTrace:       exceptionText || content,
+    causedByChain:    exceptionText
+                        ? [exceptionText.split('\n')[0]]
+                        : [content],
     context: {
       source:         'dynatrace-log-poller',
+      logger:         record.logger  || '',
+      thread:         record.thread  || '',
       status:         record.status,
       timestamp:      record.timestamp,
-      errorSignature: errorSignature,
+      errorSignature,
       cloudProvider:  record['cloud.provider'] || 'unknown',
       cloudPlatform:  record['cloud.platform'] || 'unknown',
     },
-    
-    // Timestamps
-    createdAt:        new Date(),  // When incident was first created
-    occurredAt:       new Date(record.timestamp),  // When error occurred in app
-    lastSeenAt:       new Date(record.timestamp),  // Will be updated on duplicates
-    
-    // Deduplication and tracking
-    occurrenceCount:  0,  // Will be incremented by $inc (starts at 1)
-    healingStatus:    'PENDING',
-    incidentKey:      `${serviceName}:${errorSignature}`,  // Unique key for deduplication
-    
-    _class:           'com.dynatrace.log.LogEntry',
+    createdAt:       new Date(),
+    occurredAt:      new Date(record.timestamp),
+    lastSeenAt:      new Date(record.timestamp),
+    occurrenceCount: 0,
+    healingStatus:   'PENDING',
+    incidentKey:     `${serviceName}:${errorSignature}`,
+    _class:          'com.dynatrace.log.LogEntry',
   };
 }
 
@@ -329,34 +249,31 @@ async function poll() {
     const lastProcessedTime = await readCheckpoint();
     const token             = await getOAuthToken();
 
-    // Structured Java (level=ERROR), Spring Boot (" ERROR "), .NET (fail:/crit:)
+    // Fix 1: filter on loglevel (Dynatrace maps status:"error" → loglevel:"ERROR")
+    // and scope to python-log-forwarder to avoid noise from other log sources.
+    const lookbackMinutes = Math.ceil(CHECKPOINT_LOOKBACK_MS / 60000);
     const query = [
-      'fetch logs',
-      '| filter contains(content, "level=ERROR")',
-      '  or contains(content, "level=error")',
-      '  or contains(content, " ERROR ")',
-      '  or contains(content, "level=CRITICAL")',
-      '  or contains(content, "level=FATAL")',
-      '  or startsWith(content, "fail:")',
-      '  or startsWith(content, "crit:")',
+      `fetch logs, from: now()-${lookbackMinutes}m`,
+      '| filter loglevel == "ERROR"',
+      '| filter `log.source` == "python-log-forwarder"',
       '| sort timestamp asc',
       '| limit 100',
-    ].join(' ');
-    const records = await executeDql(token, query);
+    ].join('\n');
 
+    const records = await executeDql(token, query);
     logger.info(`Dynatrace log poller: DQL returned ${records.length} record(s)`);
 
-    // Keep only records newer than the checkpoint
     const newRecords = records.filter(r => new Date(r.timestamp) > new Date(lastProcessedTime));
     logger.info(`Dynatrace log poller: ${newRecords.length} new record(s) after checkpoint filter`);
 
-    // Filter out expected business exceptions (validation errors, not found, etc.)
-    const incidentRecords = newRecords.filter(r => !isExpectedException(r.content || ''));
-    logger.info(`Dynatrace log poller: ${incidentRecords.length} incident(s) after business exception filter (${newRecords.length - incidentRecords.length} expected exceptions skipped)`);
+    // Fix 2/4: pass both content and exception to the filter
+    const incidentRecords = newRecords.filter(
+      r => !isExpectedException(r.content || '', r.exception || '')
+    );
+    const skipped = newRecords.length - incidentRecords.length;
+    logger.info(`Dynatrace log poller: ${incidentRecords.length} incident(s) to create, ${skipped} skipped`);
 
     if (incidentRecords.length === 0) {
-      logger.info('Dynatrace log poller: no actionable incidents');
-      // Still advance checkpoint even if no incidents created
       if (newRecords.length > 0) {
         const latest = new Date(newRecords[newRecords.length - 1].timestamp);
         latest.setMilliseconds(latest.getMilliseconds() + 1);
@@ -370,32 +287,27 @@ async function poll() {
 
     for (const record of incidentRecords) {
       const doc = mapToIncidentDocument(record);
-      
-      // Remove lastSeenAt from the document - it will be managed separately by $set
       const { lastSeenAt, occurrenceCount, ...insertDoc } = doc;
-      
-      // Deduplicate by incidentKey (service + error signature)
-      // Only insert if this exact error doesn't already exist
+
       const result = await col.updateOne(
         { incidentKey: doc.incidentKey },
-        { 
+        {
           $setOnInsert: insertDoc,
-          $set: { lastSeenAt: new Date(record.timestamp) },
-          $inc: { occurrenceCount: 1 }
+          $set:         { lastSeenAt: new Date(record.timestamp) },
+          $inc:         { occurrenceCount: 1 },
         },
         { upsert: true }
       );
-      
+
       if (result.upsertedCount > 0) {
-        logger.info(`Dynatrace log poller: NEW incident created — ${doc.incidentKey}`);
+        logger.info(`Dynatrace log poller: NEW incident — ${doc.incidentKey}`);
       } else {
-        logger.info(`Dynatrace log poller: DUPLICATE incident skipped — ${doc.incidentKey} (occurrence count incremented)`);
+        logger.info(`Dynatrace log poller: DUPLICATE — ${doc.incidentKey} (count incremented)`);
       }
     }
 
-    logger.info(`Dynatrace log poller: processed ${incidentRecords.length} error log(s)`);
+    logger.info(`Dynatrace log poller: processed ${incidentRecords.length} error(s)`);
 
-    // Advance checkpoint to latest record timestamp + 1ms (use newRecords, not incidentRecords)
     const latest = new Date(newRecords[newRecords.length - 1].timestamp);
     latest.setMilliseconds(latest.getMilliseconds() + 1);
     await writeCheckpoint(latest.toISOString());
@@ -420,28 +332,16 @@ async function ensureContainer() {
 
 async function ensureIndexes() {
   try {
-    const db = await getDB();
+    const db  = await getDB();
     const col = db.collection(MONGO_COLLECTION);
-    
-    // Create unique index on incidentKey for deduplication
-    await col.createIndex({ incidentKey: 1 }, { unique: true, background: true });
-    
-    // Create index on healingStatus for change stream filtering
-    await col.createIndex({ healingStatus: 1 }, { background: true });
-    
-    // Create index on incidentId for sorting (descending = newest first)
-    await col.createIndex({ incidentId: -1 }, { background: true });
-    
-    // Create index on createdAt for time-based queries
-    await col.createIndex({ createdAt: -1 }, { background: true });
-    
-    // Create index on traceId for correlation queries
-    await col.createIndex({ traceId: 1 }, { background: true, sparse: true });
-    
-    logger.info(`Dynatrace log poller: MongoDB indexes ensured`);
+    await col.createIndex({ incidentKey: 1 },   { unique: true, background: true });
+    await col.createIndex({ healingStatus: 1 },  { background: true });
+    await col.createIndex({ incidentId: -1 },    { background: true });
+    await col.createIndex({ createdAt: -1 },     { background: true });
+    await col.createIndex({ traceId: 1 },        { background: true, sparse: true });
+    logger.info('Dynatrace log poller: MongoDB indexes ensured');
   } catch (err) {
-    // Index might already exist - that's fine
-    if (err.code !== 85 && err.code !== 86) {  // IndexOptionsConflict, IndexKeySpecsConflict
+    if (err.code !== 85 && err.code !== 86) {
       logger.warn(`Dynatrace log poller: index creation warning — ${err.message}`);
     }
   }
@@ -459,10 +359,7 @@ function start() {
 
   logger.info('Dynatrace log poller starting...');
   Promise.all([ensureContainer(), ensureIndexes()])
-    .then(() => {
-      poll();
-      setInterval(poll, POLL_INTERVAL_MS);
-    })
+    .then(() => { poll(); setInterval(poll, POLL_INTERVAL_MS); })
     .catch(err => logger.error(`Dynatrace log poller failed to start: ${err.message}`));
 }
 

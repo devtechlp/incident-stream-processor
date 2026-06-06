@@ -15,19 +15,23 @@ function extractErrorFromLog(logText) {
 }
 
 function mapToIncidentDocument(event) {
-  const logText = event.content || '';
+  const content       = event.content   || '';
+  const exceptionText = event.exception || '';
   return {
     errorId:          Date.now() + Math.random(),
-    traceId:          event['trace_id'] || '',
+    traceId:          event['trace_id'] || event['dt.trace_id'] || '',
+    spanId:           event['span_id']  || '',
     applicationName:  event['service.name'] || 'unknown',
     hostName:         event['host.name'] || event['cloud.platform'] || 'unknown',
     pid:              0,
     exceptionType:    'azure.log.ERROR',
-    exceptionMessage: extractErrorFromLog(logText) || logText.substring(0, 200),
-    stackTrace:       logText,
-    causedByChain:    [extractErrorFromLog(logText) || ''],
+    exceptionMessage: content,
+    stackTrace:       exceptionText || content,
+    causedByChain:    exceptionText ? [exceptionText.split('\n')[0]] : [content],
     context: {
       source:        'dynatrace-log-forwarder',
+      logger:        event.logger        || '',
+      thread:        event.thread        || '',
       cloudProvider: event['cloud.provider'] || '',
       cloudPlatform: event['cloud.platform'] || '',
       logSource:     event['log.source'] || '',
