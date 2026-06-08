@@ -18,7 +18,7 @@
 param(
     [string]$ResourceGroup = "rg-freight-planning",
     [string]$Location = "eastus",
-    [string]$ContainerAppName = "incident-stream-proc",
+    [string]$ContainerAppName = "incident-stream-processor",
     [string]$ContainerAppsEnvironment = "cae-freight-planning",
     [string]$AcrName = "acrfreightplanning",
     [string]$ImageTag = "latest",

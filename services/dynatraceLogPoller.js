@@ -247,6 +247,7 @@ function mapToIncidentDocument(record) {
 async function poll() {
   try {
     const lastProcessedTime = await readCheckpoint();
+    logger.info(`Dynatrace log poller: poll cycle started (checkpoint: ${lastProcessedTime})`);
     const token             = await getOAuthToken();
 
     // Use checkpoint time as DQL `from` so no logs are missed during gaps or
@@ -262,9 +263,17 @@ async function poll() {
     ].join('\n');
 
     const records = await executeDql(token, query);
+    if (records.length === 0) {
+      logger.info('Dynatrace log poller: no logs');
+      return;
+    }
     logger.info(`Dynatrace log poller: DQL returned ${records.length} record(s)`);
 
     const newRecords = records.filter(r => new Date(r.timestamp) > new Date(lastProcessedTime));
+    if (newRecords.length === 0) {
+      logger.info('Dynatrace log poller: no new logs since checkpoint');
+      return;
+    }
     logger.info(`Dynatrace log poller: ${newRecords.length} new record(s) after checkpoint filter`);
 
     // Fix 2/4: pass both content and exception to the filter
@@ -275,11 +284,10 @@ async function poll() {
     logger.info(`Dynatrace log poller: ${incidentRecords.length} incident(s) to create, ${skipped} skipped`);
 
     if (incidentRecords.length === 0) {
-      if (newRecords.length > 0) {
-        const latest = new Date(newRecords[newRecords.length - 1].timestamp);
-        latest.setMilliseconds(latest.getMilliseconds() + 1);
-        await writeCheckpoint(latest.toISOString());
-      }
+      logger.info(`Dynatrace log poller: no logs to process (${skipped} skipped as expected/business errors)`);
+      const latest = new Date(newRecords[newRecords.length - 1].timestamp);
+      latest.setMilliseconds(latest.getMilliseconds() + 1);
+      await writeCheckpoint(latest.toISOString());
       return;
     }
 
