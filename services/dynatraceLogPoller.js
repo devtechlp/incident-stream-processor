@@ -10,6 +10,8 @@ const DT_CLIENT_SECRET = process.env.DT_CLIENT_SECRET;
 const POLL_INTERVAL_MS = 60 * 1000;
 const CHECKPOINT_LOOKBACK_MS = parseInt(process.env.POLLER_CHECKPOINT_LOOKBACK_MS || '', 10) || 15 * 60 * 1000;
 const MONGO_COLLECTION = process.env.MONGO_COLLECTION;
+const POLLER_SERVICE_NAMES = (process.env.POLLER_SERVICE_NAMES || '')
+  .split(',').map(s => s.trim()).filter(Boolean);
 
 const CHECKPOINT_CONNECTION = process.env.CHECKPOINT_STORAGE_CONNECTION_STRING;
 const CHECKPOINT_CONTAINER  = process.env.CHECKPOINT_CONTAINER || 'dynatrace-poller-checkpoints';
@@ -254,9 +256,12 @@ async function poll() {
     // restarts. Dynatrace Grail loglevel is always "INFO" for custom-ingested
     // logs regardless of status field — filter on isNotNull(exception) instead,
     // since the forwarder only sets that field for actual stack-trace errors.
+    const serviceFilter = POLLER_SERVICE_NAMES
+      .map(n => `\`service.name\` == "${n}"`)
+      .join(' or ');
     const query = [
       `fetch logs, from: "${lastProcessedTime}"`,
-      '| filter (`service.name` == "freight-planning-admin-service" or `service.name` == "freight-planning-transaction-service")',
+      `| filter (${serviceFilter})`,
       '| filter isNotNull(exception)',
       '| sort timestamp asc',
       '| limit 100',
@@ -359,6 +364,10 @@ async function ensureIndexes() {
 function start() {
   if (!DT_ENV_URL || !DT_CLIENT_ID || !DT_CLIENT_SECRET) {
     logger.warn('Dynatrace log poller: DT_ENV_URL / DT_CLIENT_ID / DT_CLIENT_SECRET not set — poller disabled');
+    return;
+  }
+  if (POLLER_SERVICE_NAMES.length === 0) {
+    logger.warn('Dynatrace log poller: POLLER_SERVICE_NAMES not set — poller disabled');
     return;
   }
   if (!CHECKPOINT_CONNECTION) {

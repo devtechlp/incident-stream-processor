@@ -47,6 +47,8 @@ param(
     [string]$DynatraceWebhookToken = "",
     [string]$LogLevel = "info",
 
+    [string]$PollerServiceNames = "freight-planning-admin-service,freight-planning-transaction-service,freight-planning-invoice-service",
+
     [switch]$SkipBuild,
     [switch]$SkipInfrastructure
 )
@@ -169,10 +171,11 @@ $envVars = @{
     PORT                                   = [string]$TargetPort
 }
 
-if ($DtEnvUrl)       { $envVars.DT_ENV_URL = $DtEnvUrl }
-if ($DtClientId)     { $envVars.DT_CLIENT_ID = $DtClientId }
-if ($DtClientSecret) { $envVars.DT_CLIENT_SECRET = $DtClientSecret }
+if ($DtEnvUrl)            { $envVars.DT_ENV_URL = $DtEnvUrl }
+if ($DtClientId)          { $envVars.DT_CLIENT_ID = $DtClientId }
+if ($DtClientSecret)      { $envVars.DT_CLIENT_SECRET = $DtClientSecret }
 if ($DynatraceWebhookToken) { $envVars.DYNATRACE_WEBHOOK_TOKEN = $DynatraceWebhookToken }
+if ($PollerServiceNames)  { $envVars.POLLER_SERVICE_NAMES = $PollerServiceNames }
 
 $envArgs = Get-ContainerAppEnvArgs -Env $envVars
 
