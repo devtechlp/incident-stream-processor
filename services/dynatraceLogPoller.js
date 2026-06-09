@@ -190,10 +190,11 @@ function isExpectedException(content, exceptionText) {
     }
   }
 
-  // Exception text (stack trace) means it's an unhandled server error → incident
-  const hasStackTrace = /\s+at\s+[\w$.]+\([^)]+\)/.test(exceptionText || '') ||
-                        /\s+in\s+.+\.cs:line\s+\d+/i.test(exceptionText || '') ||
-                        /File\s+".+\.py",\s+line\s+\d+/.test(exceptionText || '');
+  // Check both fields — Node.js logs often embed the stack trace in content rather
+  // than a separate exception field, so fullText covers both cases.
+  const hasStackTrace = /\s+at\s+[\w$.]+\([^)]+\)/.test(fullText) ||
+                        /\s+in\s+.+\.cs:line\s+\d+/i.test(fullText) ||
+                        /File\s+".+\.py",\s+line\s+\d+/.test(fullText);
   if (hasStackTrace) return false;
 
   // No stack trace — business error keyword in the message only
