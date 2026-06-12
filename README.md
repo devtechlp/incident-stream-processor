@@ -21,7 +21,7 @@ Alternative path: Dynatrace problem webhook → `POST /api/dynatrace/webhook` on
 
 1. A service (for example offer-intake or an exception demo API) inserts or updates a document in the configured collection.
 2. This process receives the change event (`insert`, `update`, or `replace`).
-3. If `healingStatus` is missing or **`PENDING`**, the full document is forwarded to `FUNCTION_APP_URL` with `x-functions-key`.
+3. If `healingStatus` is missing or **`PENDING`**, the full document is forwarded to the agent Function App resolved from MongoDB routing (see below), with `x-functions-key`.
 4. Documents already marked non-pending (`healingStatus !== 'PENDING'`) are skipped so the agent is not called twice.
 
 ## Requirements
@@ -39,9 +39,39 @@ Copy `.env.example` to `.env` and set values to match your environment. The coll
 | `MONGO_URI` | MongoDB connection string (SRV or standard). |
 | `MONGO_DB_NAME` | Database name (for example `incident_management`). |
 | `MONGO_COLLECTION` | Collection to watch (for example `service_error_logs`). |
-| `FUNCTION_APP_URL` | Full HTTPS URL of the Function HTTP trigger (for example `https://<app>.azurewebsites.net/api/processIncident`). |
-| `FUNCTION_APP_KEY` | Azure Function **host** key (portal: Function App → **App keys**). Sent as header `x-functions-key`. |
+| `FUNCTION_APP_URL` | Env fallback URL when routing collection/doc is missing or unreadable. |
+| `FUNCTION_APP_KEY` | Env fallback host key (sent as header `x-functions-key`). |
+| `REMEDIATION_ROUTING_COLLECTION` | Optional. MongoDB collection for agent routing (default `remediation_routing`). |
 | `LOG_LEVEL` | Optional Winston level (default `info`). |
+
+### Agent routing (MongoDB)
+
+Each forward reads the **`remediation_routing`** collection (no cache). Insert a single document with `_id: "routing"`:
+
+```json
+{
+  "_id": "routing",
+  "defaultFunctionAppUrl": "https://incident-remediation-agent-fn.../api/processIncident",
+  "defaultFunctionAppKey": "<host key>",
+  "rules": [
+    {
+      "serviceName": "freight-planning-invoice-service",
+      "functionAppUrl": "https://foundry-agent-fn.../api/processIncidentFoundry",
+      "functionAppKey": "<host key>"
+    }
+  ]
+}
+```
+
+**Resolution order:** matching `rules[].serviceName` → root `defaultFunctionApp*` → `FUNCTION_APP_URL` / `FUNCTION_APP_KEY` env vars.
+
+Example seed file: `scripts/remediation-routing.example.json`. In MongoDB Compass or `mongosh`:
+
+```javascript
+db.remediation_routing.insertOne({ /* paste document */ })
+```
+
+Only list services in `rules` that differ from the default. Logs include the route source (`rule:<service>`, `default`, or `env-fallback`).
 
 ## Run locally
 
@@ -107,7 +137,8 @@ Same names as environment variables above.
 | `index.js` | Entry: connect Mongo, start change stream. |
 | `config/db.js` | `MongoClient` connection and `getDB()`. |
 | `listener/changeStream.js` | Watches the collection, filters by `healingStatus`, calls publisher. |
-| `publisher/httpPublisher.js` | `axios` POST to the Function with JSON body and key header. |
+| `publisher/agentRouter.js` | Resolves Function App URL/key from `remediation_routing` (MongoDB, no cache). |
+| `publisher/httpPublisher.js` | `axios` POST to the resolved Function with JSON body and key header. |
 | `utils/logger.js` | Winston console logger. |
 
 ## Behavior notes
