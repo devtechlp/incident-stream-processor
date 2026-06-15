@@ -1,17 +1,12 @@
 {
   "_id": "routing",
   "defaultFunctionAppUrl": "https://incident-remediation-agent-fn.azurewebsites.net/api/processIncident",
-  "defaultFunctionAppKey": "<incident-remediation-agent host key>",
+  "defaultFunctionAppKey": "<incident-remediation-agent-fn host key>",
   "rules": [
     {
       "serviceName": "freight-planning-invoice-service",
       "functionAppUrl": "https://incident-remediation-agent-foundry-fn.azurewebsites.net/api/processIncident",
       "functionAppKey": "<incident-remediation-agent-foundry-fn host key>"
-    },
-    {
-      "serviceName": "freight-planning-transaction-service",
-      "functionAppUrl": "https://incident-remediation-bycopilot-fn.azurewebsites.net/api/processIncident",
-      "functionAppKey": "<bycopilot function app host key>"
     }
   ]
 }

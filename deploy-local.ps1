@@ -18,7 +18,7 @@
 param(
     [string]$ResourceGroup = "rg-freight-planning",
     [string]$Location = "eastus",
-    [string]$ContainerAppName = "incident-stream-processor",
+    [string]$ContainerAppName = "incident-stream-proc",
     [string]$ContainerAppsEnvironment = "cae-freight-planning",
     [string]$AcrName = "acrfreightplanning",
     [string]$ImageTag = "latest",
@@ -285,6 +285,8 @@ if (-not $appExists) {
         --name $ContainerAppName `
         --resource-group $ResourceGroup `
         --image $FullImage `
+        --min-replicas 1 `
+        --max-replicas 1 `
         --set-env-vars @envArgs | Out-Null
     if ($LASTEXITCODE -ne 0) {
         Write-Host "ERROR: Container App update failed" -ForegroundColor Red
@@ -306,6 +308,28 @@ if (-not $appExists) {
 }
 
 Write-Host "Container App deployed" -ForegroundColor Green
+Write-Host ""
+
+# Step 6b: Start app if it was stopped in Azure (Stop action sets runningStatus=Stopped)
+$runningStatus = az containerapp show `
+    --name $ContainerAppName `
+    --resource-group $ResourceGroup `
+    --query "properties.runningStatus" -o tsv 2>$null
+
+if ($runningStatus -eq "Stopped") {
+    Write-Host "Container App is stopped — starting it..." -ForegroundColor Yellow
+    $appId = az containerapp show `
+        --name $ContainerAppName `
+        --resource-group $ResourceGroup `
+        --query "id" -o tsv
+    az resource invoke-action --action start --ids $appId | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "Container App started" -ForegroundColor Green
+    } else {
+        Write-Host "WARNING: Could not start Container App automatically. Start it in Azure Portal." -ForegroundColor Yellow
+    }
+}
+
 Write-Host ""
 
 # Step 7: Summary

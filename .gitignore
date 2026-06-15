@@ -26,3 +26,4 @@ Thumbs.db
 
 # Optional local config
 *.local
+scripts/remediation-routing.local.json
