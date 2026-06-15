@@ -4,6 +4,8 @@ const { connectDB } = require('./config/db');
 const { startChangeStream } = require('./listener/changeStream');
 const dynatraceWebhook = require('./webhook/dynatraceWebhook');
 const logIngestWebhook = require('./webhook/logIngestWebhook');
+const githubWebhook = require('./webhook/githubWebhook');
+const incidentStatus = require('./api/incidentStatus');
 const dynatraceLogPoller = require('./services/dynatraceLogPoller');
 const logger = require('./utils/logger');
 
@@ -14,9 +16,14 @@ async function main() {
     dynatraceLogPoller.start();
 
     const app = express();
+
+    // GitHub org webhook requires raw body for HMAC verification (before express.json())
+    app.use('/api/github', express.raw({ type: 'application/json' }), githubWebhook);
+
     app.use(express.json());
     app.use('/api/dynatrace', dynatraceWebhook);
     app.use('/api/logs', logIngestWebhook);
+    app.use('/api/incidents', incidentStatus);
 
     app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 

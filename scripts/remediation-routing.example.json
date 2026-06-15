@@ -9,9 +9,9 @@
       "functionAppKey": "<incident-remediation-agent-foundry-fn host key>"
     },
     {
-      "serviceName": "freight-planning-transaction-service",
-      "functionAppUrl": "https://incident-remediation-bycopilot-fn.azurewebsites.net/api/processIncident",
-      "functionAppKey": "<bycopilot function app host key>"
+      "serviceName": "freight-planning-admin-service",
+      "functionAppUrl": "https://incident-remediation-agent-copilot-fn.azurewebsites.net/api/processIncident",
+      "functionAppKey": "<copilot-agent host key>"
     }
   ]
 }

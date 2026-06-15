@@ -1,0 +1,120 @@
+const { ObjectId } = require('mongodb');
+const { getDB } = require('../config/db');
+const logger = require('../utils/logger');
+
+const ALLOWED_STATUSES = new Set(['PR_RAISED', 'ESCALATED']);
+const UPDATABLE_FROM = new Set(['ISSUE_CREATED', 'IN_PROGRESS']);
+
+/** Match issue/PR bodies stamped by incident-remediation-agent-copilot-fn */
+const INCIDENT_ID_RE = /Incident MongoDB ID:\s*`?([a-f\d]{24})`?/i;
+
+function extractIncidentMongoId(text) {
+  if (!text) return null;
+  const match = String(text).match(INCIDENT_ID_RE);
+  return match ? match[1] : null;
+}
+
+function parseObjectId(id) {
+  if (!id || !/^[a-f\d]{24}$/i.test(String(id))) {
+    return null;
+  }
+  return new ObjectId(id);
+}
+
+function buildUpdateFields({ healingStatus, prUrl, prBranch, escalationReason, issueUrl }) {
+  const now = new Date();
+  const fields = { healingStatus, statusUpdatedAt: now };
+
+  if (healingStatus === 'PR_RAISED') {
+    if (prUrl) fields.prUrl = prUrl;
+    if (prBranch) fields.prBranch = prBranch;
+    fields.prCreatedAt = now;
+  }
+
+  if (healingStatus === 'ESCALATED') {
+    if (escalationReason) fields.escalationReason = escalationReason;
+    if (issueUrl) fields.issueUrl = issueUrl;
+    fields.escalatedAt = now;
+  }
+
+  return fields;
+}
+
+/**
+ * Transition incident healingStatus (Copilot webhook or manual PATCH).
+ * @returns {{ ok: boolean, statusCode: number, body: object }}
+ */
+async function updateIncidentStatus(mongoIdRaw, update) {
+  const mongoId = parseObjectId(mongoIdRaw);
+  if (!mongoId) {
+    return { ok: false, statusCode: 400, body: { error: 'Invalid MongoDB _id' } };
+  }
+
+  const { healingStatus } = update;
+  if (!healingStatus || !ALLOWED_STATUSES.has(healingStatus)) {
+    return {
+      ok: false,
+      statusCode: 400,
+      body: { error: 'healingStatus must be PR_RAISED or ESCALATED' },
+    };
+  }
+
+  if (healingStatus === 'PR_RAISED' && !update.prUrl) {
+    return { ok: false, statusCode: 400, body: { error: 'prUrl is required when healingStatus is PR_RAISED' } };
+  }
+
+  if (healingStatus === 'ESCALATED' && !update.escalationReason) {
+    return {
+      ok: false,
+      statusCode: 400,
+      body: { error: 'escalationReason is required when healingStatus is ESCALATED' },
+    };
+  }
+
+  const col = (await getDB()).collection(process.env.MONGO_COLLECTION);
+  const existing = await col.findOne({ _id: mongoId }, { projection: { healingStatus: 1 } });
+
+  if (!existing) {
+    return { ok: false, statusCode: 404, body: { error: 'Incident not found' } };
+  }
+
+  if (existing.healingStatus === healingStatus) {
+    logger.info(`Incident ${mongoId} already ${healingStatus} - idempotent OK`);
+    return {
+      ok: true,
+      statusCode: 200,
+      body: { incident_id: String(mongoId), healingStatus, status: 'unchanged' },
+    };
+  }
+
+  if (!UPDATABLE_FROM.has(existing.healingStatus)) {
+    return {
+      ok: false,
+      statusCode: 409,
+      body: {
+        error: `Cannot transition from ${existing.healingStatus} to ${healingStatus}`,
+        currentStatus: existing.healingStatus,
+      },
+    };
+  }
+
+  const fields = buildUpdateFields(update);
+  await col.updateOne({ _id: mongoId }, { $set: fields });
+
+  logger.info(`Incident ${mongoId}: ${existing.healingStatus} -> ${healingStatus}`);
+  return {
+    ok: true,
+    statusCode: 200,
+    body: {
+      incident_id: String(mongoId),
+      healingStatus,
+      previousStatus: existing.healingStatus,
+    },
+  };
+}
+
+module.exports = {
+  updateIncidentStatus,
+  parseObjectId,
+  extractIncidentMongoId,
+};

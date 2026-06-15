@@ -1,8 +1,13 @@
+# Manual deploy only — not triggered on push. Use deploy-local.ps1 for day-to-day deploys.
+# To run from GitHub: Actions tab → "Deploy incident-stream-processor" → Run workflow
+#
+# GitHub repo secrets (if using this workflow later):
+#   GITHUB_WEBHOOK_SECRET — same secret you set on the GitHub org webhook (deploy-local.ps1 generates one)
+#   INTERNAL_API_KEY      — optional; only for manual PATCH /api/incidents/:id/status (not Copilot flow)
+
 name: Deploy incident-stream-processor to Azure Container Apps
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -21,6 +26,8 @@ env:
   MONGO_COLLECTION: ${{ secrets.MONGO_COLLECTION }}
   FUNCTION_APP_URL: ${{ secrets.FUNCTION_APP_URL }}
   FUNCTION_APP_KEY: ${{ secrets.FUNCTION_APP_KEY }}
+  INTERNAL_API_KEY: ${{ secrets.INTERNAL_API_KEY }}
+  GITHUB_WEBHOOK_SECRET: ${{ secrets.GITHUB_WEBHOOK_SECRET }}
   DYNATRACE_WEBHOOK_TOKEN: ${{ secrets.DYNATRACE_WEBHOOK_TOKEN }}
   DT_ENV_URL: ${{ secrets.DT_ENV_URL }}
   DT_CLIENT_ID: ${{ secrets.DT_CLIENT_ID }}
@@ -70,6 +77,8 @@ jobs:
                 "MONGO_COLLECTION=$MONGO_COLLECTION" \
                 "FUNCTION_APP_URL=$FUNCTION_APP_URL" \
                 "FUNCTION_APP_KEY=$FUNCTION_APP_KEY" \
+                "INTERNAL_API_KEY=$INTERNAL_API_KEY" \
+                "GITHUB_WEBHOOK_SECRET=$GITHUB_WEBHOOK_SECRET" \
                 "DYNATRACE_WEBHOOK_TOKEN=$DYNATRACE_WEBHOOK_TOKEN" \
                 "DT_ENV_URL=$DT_ENV_URL" \
                 "DT_CLIENT_ID=$DT_CLIENT_ID" \
@@ -89,6 +98,8 @@ jobs:
                 "MONGO_COLLECTION=$MONGO_COLLECTION" \
                 "FUNCTION_APP_URL=$FUNCTION_APP_URL" \
                 "FUNCTION_APP_KEY=$FUNCTION_APP_KEY" \
+                "INTERNAL_API_KEY=$INTERNAL_API_KEY" \
+                "GITHUB_WEBHOOK_SECRET=$GITHUB_WEBHOOK_SECRET" \
                 "DYNATRACE_WEBHOOK_TOKEN=$DYNATRACE_WEBHOOK_TOKEN" \
                 "DT_ENV_URL=$DT_ENV_URL" \
                 "DT_CLIENT_ID=$DT_CLIENT_ID" \

@@ -46,6 +46,8 @@ param(
 
     [string]$DynatraceWebhookToken = "",
     [string]$LogLevel = "info",
+    [string]$GithubWebhookSecret = "",
+    [string]$InternalApiKey = "",
 
     [string]$PollerServiceNames = "freight-planning-admin-service,freight-planning-transaction-service,freight-planning-invoice-service",
 
@@ -158,6 +160,23 @@ if (-not $DtEnvUrl -or -not $DtClientId -or -not $DtClientSecret) {
     Write-Host ""
 }
 
+if (-not $GithubWebhookSecret) {
+    $prevEapGh = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    $GithubWebhookSecret = az containerapp show `
+        --name $ContainerAppName `
+        --resource-group $ResourceGroup `
+        --query "properties.template.containers[0].env[?name=='GITHUB_WEBHOOK_SECRET'].value | [0]" -o tsv 2>$null
+    $ErrorActionPreference = $prevEapGh
+}
+
+if (-not $GithubWebhookSecret) {
+    $GithubWebhookSecret = [guid]::NewGuid().ToString("N")
+    Write-Host "Generated GITHUB_WEBHOOK_SECRET (use when registering GitHub org webhook):" -ForegroundColor Yellow
+    Write-Host "  $GithubWebhookSecret" -ForegroundColor White
+    Write-Host ""
+}
+
 $envVars = @{
     MONGO_URI                              = $MongoUri
     MONGO_DB_NAME                          = $MongoDbName
@@ -169,6 +188,11 @@ $envVars = @{
     CHECKPOINT_BLOB                        = $CheckpointBlob
     LOG_LEVEL                              = $LogLevel
     PORT                                   = [string]$TargetPort
+    GITHUB_WEBHOOK_SECRET                  = $GithubWebhookSecret
+}
+
+if ($InternalApiKey) {
+    $envVars.INTERNAL_API_KEY = $InternalApiKey
 }
 
 if ($DtEnvUrl)            { $envVars.DT_ENV_URL = $DtEnvUrl }
@@ -350,14 +374,20 @@ $ErrorActionPreference = $prevEap
 
 if ($fqdn) {
     $healthUrl = "https://$fqdn/health"
-    $webhookUrl = "https://$fqdn/api/dynatrace/webhook"
+    $dynatraceWebhookUrl = "https://$fqdn/api/dynatrace/webhook"
+    $githubWebhookUrl = "https://$fqdn/api/github/webhook"
     Write-Host "Container App URL: https://$fqdn" -ForegroundColor Cyan
     Write-Host ""
     Write-Host "Health check:" -ForegroundColor Cyan
     Write-Host "  $healthUrl" -ForegroundColor White
     Write-Host ""
     Write-Host "Dynatrace webhook (optional):" -ForegroundColor Cyan
-    Write-Host "  $webhookUrl" -ForegroundColor White
+    Write-Host "  $dynatraceWebhookUrl" -ForegroundColor White
+    Write-Host ""
+    Write-Host "GitHub org webhook (Copilot status updates):" -ForegroundColor Cyan
+    Write-Host "  $githubWebhookUrl" -ForegroundColor White
+    Write-Host "  Secret: (GITHUB_WEBHOOK_SECRET - shown above if newly generated)" -ForegroundColor White
+    Write-Host "  Events: Pull requests + Issue comments" -ForegroundColor White
     Write-Host ""
 } else {
     Write-Host "Container App: $ContainerAppName (ingress FQDN not available yet)" -ForegroundColor Cyan
