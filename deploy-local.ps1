@@ -1,7 +1,7 @@
 # Deploy incident-stream-processor to Azure Container Apps from local machine
 # Run from: C:\SolEng\POC\incident-stream-processor
 #
-# Example (minimal — auto-resolves agent URL/key and checkpoint storage):
+# Example (minimal - auto-resolves agent URL/key and checkpoint storage):
 #   .\deploy-local.ps1 `
 #     -MongoUri "mongodb+srv://..." `
 #     -DtEnvUrl "https://your-env.apps.dynatrace.com" `
@@ -317,7 +317,7 @@ $runningStatus = az containerapp show `
     --query "properties.runningStatus" -o tsv 2>$null
 
 if ($runningStatus -eq "Stopped") {
-    Write-Host "Container App is stopped — starting it..." -ForegroundColor Yellow
+    Write-Host "Container App is stopped - starting it..." -ForegroundColor Yellow
     $appId = az containerapp show `
         --name $ContainerAppName `
         --resource-group $ResourceGroup `
