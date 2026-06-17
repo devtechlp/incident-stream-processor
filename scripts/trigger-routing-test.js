@@ -1,5 +1,5 @@
 /**
- * Insert a one-off PENDING invoice incident to verify Foundry routing.
+ * Insert a one-off PENDING invoice incident to verify Copilot routing.
  * Change stream will forward it; delete the doc afterward if needed.
  *
  *   node scripts/trigger-routing-test.js
@@ -22,7 +22,7 @@ const TEST_KEY = `freight-planning-invoice-service:routing-test:${Date.now()}`;
     hostName: 'routing-test',
     pid: 0,
     exceptionType: 'RoutingTestError',
-    exceptionMessage: 'Synthetic incident to verify Foundry agent routing',
+    exceptionMessage: 'Synthetic incident to verify Copilot agent routing',
     stackTrace: 'RoutingTestError: synthetic test\n    at routing-test.js:1:1',
     causedByChain: ['RoutingTestError: synthetic test'],
     context: { source: 'routing-test-script' },

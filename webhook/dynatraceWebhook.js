@@ -48,6 +48,7 @@ function mapToIncidentDocument(payload) {
     // Core fields matching the existing document schema
     errorId: Date.now(),                                     // unique Long — no sequential ID from Dynatrace
     traceId: payload.ProblemID,                              // Dynatrace problem ID used as trace identifier
+    serviceName: applicationName,
     applicationName,
     hostName,
     pid: 0,                                                  // not available from Dynatrace

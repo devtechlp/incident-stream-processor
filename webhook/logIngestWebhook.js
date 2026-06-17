@@ -22,6 +22,7 @@ function mapToIncidentDocument(event) {
     traceId:          event['trace_id'] || event['dt.trace_id'] || '',
     spanId:           event['span_id']  || '',
     applicationName:  event['service.name'] || 'unknown',
+    serviceName:      event['service.name'] || 'unknown',
     hostName:         event['host.name'] || event['cloud.platform'] || 'unknown',
     pid:              0,
     exceptionType:    'azure.log.ERROR',

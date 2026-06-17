@@ -1,5 +1,6 @@
 const { getDB } = require('../config/db');
 const logger = require('../utils/logger');
+const { resolveServiceName } = require('./serviceName');
 
 const ROUTING_DOC_ID = 'routing';
 
@@ -29,7 +30,7 @@ function envFallback(serviceName) {
  *   3. FUNCTION_APP_URL / FUNCTION_APP_KEY env vars
  */
 async function resolveAgentEndpoint(doc) {
-  const serviceName = doc?.serviceName ?? 'unknown';
+  const serviceName = resolveServiceName(doc);
 
   try {
     const db = await getDB();
@@ -68,4 +69,4 @@ async function resolveAgentEndpoint(doc) {
   }
 }
 
-module.exports = { resolveAgentEndpoint, routingCollectionName, ROUTING_DOC_ID };
+module.exports = { resolveAgentEndpoint, routingCollectionName, ROUTING_DOC_ID, resolveServiceName };

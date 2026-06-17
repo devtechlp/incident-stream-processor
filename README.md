@@ -58,8 +58,13 @@ Each forward reads the **`remediation_routing`** collection (no cache). Insert a
   "rules": [
     {
       "serviceName": "freight-planning-invoice-service",
-      "functionAppUrl": "https://foundry-agent-fn.../api/processIncidentFoundry",
-      "functionAppKey": "<host key>"
+      "functionAppUrl": "https://incident-remediation-agent-copilot-fn.../api/processIncident",
+      "functionAppKey": "<copilot host key>"
+    },
+    {
+      "serviceName": "freight-planning-admin-service",
+      "functionAppUrl": "https://incident-remediation-agent-foundry-fn.../api/processIncident",
+      "functionAppKey": "<foundry host key>"
     }
   ]
 }
@@ -112,7 +117,7 @@ GitHub → Organization Settings → Webhooks → Add webhook
 
 Allowed transitions: `ISSUE_CREATED` or `IN_PROGRESS` → `PR_RAISED` or `ESCALATED`.
 
-The Copilot agent stamps `Incident MongoDB ID: \`<id>\`` in the GitHub issue body; Copilot must include the same line in the PR body (see issue playbook).
+The Copilot agent stamps `Incident MongoDB ID: \`<id>\`` in the GitHub issue body; Copilot must include the same line in the PR body (see the Copilot **playbook**).
 
 ### Optional manual status API
 
@@ -189,6 +194,8 @@ Repository secrets (only if using that workflow): same table as in the GitHub or
 - The change stream uses **`fullDocument: 'updateLookup'`** so updates include the latest document body when MongoDB provides it.
 - On **change stream error or close**, the listener schedules a **reconnect after 5 seconds** (in-process).
 - Only documents whose **`healingStatus` is unset or `PENDING`** are forwarded; others are logged and skipped.
+- Before POSTing to an agent, the publisher **atomically sets `dispatchedAt`** on the incident so duplicate change events (insert + update, multiple replicas) cannot forward the same incident to two agents.
+- Routing resolves **`serviceName` or `applicationName`** (legacy webhook docs only had `applicationName`).
 - HTTP timeout to the Function is **15 seconds**; successful responses are logged with status code.
 
 ## Troubleshooting

@@ -19,6 +19,12 @@ const routing = {
     {
       serviceName: "freight-planning-invoice-service",
       functionAppUrl:
+        "https://incident-remediation-agent-copilot-fn.azurewebsites.net/api/processIncident",
+      functionAppKey: "<incident-remediation-agent-copilot-fn host key>",
+    },
+    {
+      serviceName: "freight-planning-admin-service",
+      functionAppUrl:
         "https://incident-remediation-agent-foundry-fn.azurewebsites.net/api/processIncident",
       functionAppKey: "<incident-remediation-agent-foundry-fn host key>",
     },

@@ -376,7 +376,7 @@ function start() {
     return;
   }
 
-  logger.info('Dynatrace log poller starting...');
+  logger.info(`Dynatrace log poller starting (DT_ENV_URL=${DT_ENV_URL})...`);
   Promise.all([ensureContainer(), ensureIndexes()])
     .then(() => { poll(); setInterval(poll, POLL_INTERVAL_MS); })
     .catch(err => logger.error(`Dynatrace log poller failed to start: ${err.message}`));
