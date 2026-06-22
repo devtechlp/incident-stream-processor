@@ -43,6 +43,8 @@ Copy `.env.example` to `.env` and set values to match your environment. The coll
 | `FUNCTION_APP_KEY` | Env fallback host key (sent as header `x-functions-key`). |
 | `REMEDIATION_ROUTING_COLLECTION` | Optional. MongoDB collection for agent routing (default `remediation_routing`). |
 | `GITHUB_WEBHOOK_SECRET` | Secret for GitHub org webhook HMAC (`x-hub-signature-256`). |
+| `GITHUB_TOKEN` | Recommended. Resolves `Incident MongoDB ID` from PR commits/linked issues and runs the 5-minute empty-PR recheck. |
+| `COPILOT_PR_RECHECK_MS` | Optional. Delay before re-checking an empty Copilot PR (default `300000` = 5 min). |
 | `INTERNAL_API_KEY` | Optional. For manual `PATCH /api/incidents/:id/status` only. |
 | `LOG_LEVEL` | Optional Winston level (default `info`). |
 
@@ -112,10 +114,13 @@ GitHub → Organization Settings → Webhooks → Add webhook
 
 | Event | Condition | MongoDB update |
 |-------|-----------|----------------|
-| `pull_request` | `action == opened` and PR body contains `Incident MongoDB ID:` | `healingStatus: PR_RAISED`, `prUrl`, `prBranch` |
+| `pull_request` | `action == opened` or `synchronize`, `changed_files > 0`, and `Incident MongoDB ID` resolved (PR body, commit message, linked issue, or recent `ISSUE_CREATED` fallback) | `healingStatus: PR_RAISED`, `prUrl`, `prBranch` |
+| `pull_request` | `action == opened`, Copilot PR with `changed_files == 0`, incident ID resolved | No status change yet; schedules 5-minute recheck → `PR_RAISED` if files appear, else `FAILED` |
 | `issue_comment` | `action == created` and comment starts with `ESCALATED:` | `healingStatus: ESCALATED`, `escalationReason`, `issueUrl` |
 
-Allowed transitions: `ISSUE_CREATED` or `IN_PROGRESS` → `PR_RAISED` or `ESCALATED`.
+Allowed transitions: `ISSUE_CREATED` or `IN_PROGRESS` → `PR_RAISED`, `ESCALATED`, or `FAILED` (empty Copilot PR after recheck).
+
+**Backward compatibility:** `ESCALATED` comments behave exactly as before. `PR_RAISED` is now stricter (requires file changes). Existing successful Copilot PRs that land commits via `pull_request.synchronize` are supported; set `GITHUB_TOKEN` so IDs in commit messages (not just PR bodies) are detected.
 
 The Copilot agent stamps `Incident MongoDB ID: \`<id>\`` in the GitHub issue body; Copilot must include the same line in the PR body (see the Copilot **playbook**).
 
@@ -158,7 +163,9 @@ cd C:\SolEng\POC\incident-stream-processor
   -MongoUri "mongodb+srv://..." `
   -DtEnvUrl "https://your-env.apps.dynatrace.com" `
   -DtClientId "dt0s02...." `
-  -DtClientSecret "dt0s02...."
+  -DtClientSecret "dt0s02...." `
+  -GithubToken "ghp_..." `
+  -GithubWebhookSecret "your-webhook-secret"
 ```
 
 `deploy-local.ps1` defaults to **`rg-freight-planning`**, **`acrfreightplanning`**, **`cae-freight-planning`**, and **`incident-stream-proc`**. It auto-resolves `FUNCTION_APP_URL`, `FUNCTION_APP_KEY` (from **incident-remediation-agent-fn**), and checkpoint storage (from **stincidentremediation**) unless you pass them explicitly.

@@ -113,8 +113,72 @@ async function updateIncidentStatus(mongoIdRaw, update) {
   };
 }
 
+/**
+ * Mark a Copilot remediation attempt as failed (empty PR after recheck window).
+ * Allowed from ISSUE_CREATED or IN_PROGRESS only.
+ */
+async function markCopilotPrFailed(mongoIdRaw, { prUrl, reason }) {
+  const mongoId = parseObjectId(mongoIdRaw);
+  if (!mongoId) {
+    return { ok: false, statusCode: 400, body: { error: 'Invalid MongoDB _id' } };
+  }
+
+  if (!reason) {
+    return { ok: false, statusCode: 400, body: { error: 'reason is required when marking Copilot PR failed' } };
+  }
+
+  const col = (await getDB()).collection(process.env.MONGO_COLLECTION);
+  const existing = await col.findOne({ _id: mongoId }, { projection: { healingStatus: 1 } });
+
+  if (!existing) {
+    return { ok: false, statusCode: 404, body: { error: 'Incident not found' } };
+  }
+
+  if (existing.healingStatus === 'FAILED') {
+    return {
+      ok: true,
+      statusCode: 200,
+      body: { incident_id: String(mongoId), healingStatus: 'FAILED', status: 'unchanged' },
+    };
+  }
+
+  if (!UPDATABLE_FROM.has(existing.healingStatus)) {
+    return {
+      ok: false,
+      statusCode: 409,
+      body: {
+        error: `Cannot transition from ${existing.healingStatus} to FAILED`,
+        currentStatus: existing.healingStatus,
+      },
+    };
+  }
+
+  const now = new Date();
+  const fields = {
+    healingStatus: 'FAILED',
+    statusUpdatedAt: now,
+    agent_error: reason,
+    agent_finished_at: now,
+  };
+  if (prUrl) fields.prUrl = prUrl;
+
+  await col.updateOne({ _id: mongoId }, { $set: fields });
+
+  logger.info(`Incident ${mongoId}: ${existing.healingStatus} -> FAILED (${reason})`);
+  return {
+    ok: true,
+    statusCode: 200,
+    body: {
+      incident_id: String(mongoId),
+      healingStatus: 'FAILED',
+      previousStatus: existing.healingStatus,
+    },
+  };
+}
+
 module.exports = {
   updateIncidentStatus,
+  markCopilotPrFailed,
   parseObjectId,
   extractIncidentMongoId,
 };

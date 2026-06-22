@@ -4,7 +4,8 @@
   "description": "MongoDB change stream listener — forwards incidents to incident-remediation-agent",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "test:copilot-pr": "node test/copilot-pr-validation.test.js"
   },
   "dependencies": {
     "@azure/storage-blob": "^12.31.0",

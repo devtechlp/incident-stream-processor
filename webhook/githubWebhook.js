@@ -2,6 +2,16 @@ const crypto = require('crypto');
 const express = require('express');
 const logger = require('../utils/logger');
 const { updateIncidentStatus, extractIncidentMongoId } = require('../services/incidentStatusUpdate');
+const {
+  hasDeliverableChanges,
+  isLikelyCopilotPr,
+  resolveIncidentMongoId,
+  findMongoIdFromRecentIssue,
+} = require('../services/copilotPrValidation');
+const {
+  cancelScheduledRecheck,
+  scheduleEmptyCopilotPrRecheck,
+} = require('../services/copilotPrRecheck');
 
 const router = express.Router();
 
@@ -22,22 +32,67 @@ function parseEscalationReason(commentBody) {
   return text.slice('ESCALATED:'.length).trim() || null;
 }
 
-async function handlePullRequestOpened(payload) {
+async function handlePullRequest(payload) {
   const pr = payload.pull_request;
-  if (!pr) return { handled: false, reason: 'missing pull_request' };
+  const action = payload.action;
+  const repository = payload.repository;
 
-  const mongoId = extractIncidentMongoId(pr.body);
-  if (!mongoId) {
-    return { handled: false, reason: 'PR body missing Incident MongoDB ID' };
+  if (!pr) return { handled: false, reason: 'missing pull_request' };
+  if (!['opened', 'synchronize'].includes(action)) {
+    return { handled: false, reason: `unsupported pull_request action ${action}` };
   }
 
-  const result = await updateIncidentStatus(mongoId, {
-    healingStatus: 'PR_RAISED',
-    prUrl: pr.html_url,
-    prBranch: pr.head?.ref,
-  });
+  const owner = repository?.owner?.login;
+  const repo = repository?.name;
+  let mongoId = await resolveIncidentMongoId(pr, repository);
 
-  return { handled: true, mongoId, result };
+  if (!mongoId && action === 'opened' && isLikelyCopilotPr(pr)) {
+    mongoId = await findMongoIdFromRecentIssue(repository);
+  }
+
+  if (hasDeliverableChanges(pr)) {
+    if (!mongoId) {
+      return { handled: false, reason: 'PR missing Incident MongoDB ID' };
+    }
+
+    if (owner && repo && pr.number) {
+      cancelScheduledRecheck(owner, repo, pr.number);
+    }
+
+    const result = await updateIncidentStatus(mongoId, {
+      healingStatus: 'PR_RAISED',
+      prUrl: pr.html_url,
+      prBranch: pr.head?.ref,
+    });
+
+    return { handled: true, mongoId, result, action, deliverable: true };
+  }
+
+  if (action === 'opened' && isLikelyCopilotPr(pr) && mongoId && owner && repo) {
+    scheduleEmptyCopilotPrRecheck({ mongoId, pr, owner, repo });
+    return {
+      handled: true,
+      mongoId,
+      action,
+      deliverable: false,
+      result: {
+        ok: true,
+        statusCode: 202,
+        body: {
+          incident_id: mongoId,
+          status: 'awaiting_copilot_changes',
+          message: 'Empty Copilot PR opened; recheck scheduled',
+        },
+      },
+    };
+  }
+
+  return {
+    handled: false,
+    reason: action === 'opened'
+      ? 'PR has no file changes yet'
+      : 'PR synchronize event had no deliverable file changes',
+  };
 }
 
 async function handleIssueCommentCreated(payload) {
@@ -97,15 +152,18 @@ router.post('/webhook', async (req, res) => {
   const action = payload.action;
 
   try {
-    if (event === 'pull_request' && action === 'opened') {
-      const outcome = await handlePullRequestOpened(payload);
+    if (event === 'pull_request' && ['opened', 'synchronize'].includes(action)) {
+      const outcome = await handlePullRequest(payload);
       if (!outcome.handled) {
-        logger.info(`GitHub webhook: ignored pull_request.opened - ${outcome.reason}`);
+        logger.info(`GitHub webhook: ignored pull_request.${action} - ${outcome.reason}`);
         return res.status(200).json({ status: 'ignored', reason: outcome.reason });
       }
 
+      const status = outcome.result?.body?.healingStatus
+        || outcome.result?.body?.status
+        || 'processed';
       logger.info(
-        `GitHub webhook: pull_request.opened incident=${outcome.mongoId} -> ${outcome.result.body.healingStatus ?? 'error'}`
+        `GitHub webhook: pull_request.${action} incident=${outcome.mongoId} deliverable=${outcome.deliverable} -> ${status}`
       );
       return res.status(outcome.result.statusCode).json(outcome.result.body);
     }

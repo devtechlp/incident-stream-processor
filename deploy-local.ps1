@@ -1,19 +1,14 @@
 # Deploy incident-stream-processor to Azure Container Apps from local machine
 # Run from: C:\SolEng\POC\incident-stream-processor
 #
-# Example (minimal - auto-resolves agent URL/key and checkpoint storage):
+# Example:
 #   .\deploy-local.ps1 `
 #     -MongoUri "mongodb+srv://..." `
 #     -DtEnvUrl "https://your-env.apps.dynatrace.com" `
 #     -DtClientId "dt0s02...." `
-#     -DtClientSecret "dt0s02...."
-#
-# Example (explicit agent + function key):
-#   .\deploy-local.ps1 `
-#     -MongoUri "mongodb+srv://..." `
-#     -FunctionAppUrl "https://incident-remediation-agent-fn.azurewebsites.net/api/processIncident" `
-#     -FunctionAppKey "..." `
-#     -CheckpointStorageConnectionString "DefaultEndpointsProtocol=https;..."
+#     -DtClientSecret "dt0s02...." `
+#     -GithubToken "ghp_..." `
+#     -GithubWebhookSecret "your-webhook-secret"
 
 param(
     [string]$ResourceGroup = "rg-freight-planning",
@@ -47,6 +42,7 @@ param(
     [string]$DynatraceWebhookToken = "",
     [string]$LogLevel = "info",
     [string]$GithubWebhookSecret = "",
+    [string]$GithubToken = "",
     [string]$InternalApiKey = "",
 
     [string]$PollerServiceNames = "freight-planning-admin-service,freight-planning-transaction-service,freight-planning-invoice-service",
@@ -84,6 +80,21 @@ function Get-ContainerAppEnvArgs {
         }
     }
     return $args
+}
+
+function Get-ContainerAppEnvValue {
+    param(
+        [string]$Name
+    )
+
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'SilentlyContinue'
+    $value = az containerapp show `
+        --name $ContainerAppName `
+        --resource-group $ResourceGroup `
+        --query "properties.template.containers[0].env[?name=='$Name'].value | [0]" -o tsv 2>$null
+    $ErrorActionPreference = $prevEap
+    return $value
 }
 
 Write-Host "====================================================" -ForegroundColor Cyan
@@ -161,19 +172,24 @@ if (-not $DtEnvUrl -or -not $DtClientId -or -not $DtClientSecret) {
 }
 
 if (-not $GithubWebhookSecret) {
-    $prevEapGh = $ErrorActionPreference
-    $ErrorActionPreference = 'SilentlyContinue'
-    $GithubWebhookSecret = az containerapp show `
-        --name $ContainerAppName `
-        --resource-group $ResourceGroup `
-        --query "properties.template.containers[0].env[?name=='GITHUB_WEBHOOK_SECRET'].value | [0]" -o tsv 2>$null
-    $ErrorActionPreference = $prevEapGh
+    $GithubWebhookSecret = Get-ContainerAppEnvValue -Name "GITHUB_WEBHOOK_SECRET"
 }
 
 if (-not $GithubWebhookSecret) {
     $GithubWebhookSecret = [guid]::NewGuid().ToString("N")
     Write-Host "Generated GITHUB_WEBHOOK_SECRET (use when registering GitHub org webhook):" -ForegroundColor Yellow
     Write-Host "  $GithubWebhookSecret" -ForegroundColor White
+    Write-Host ""
+}
+
+if (-not $GithubToken) {
+    $GithubToken = Get-ContainerAppEnvValue -Name "GITHUB_TOKEN"
+}
+
+if (-not $GithubToken) {
+    Write-Host "WARNING: GITHUB_TOKEN not set." -ForegroundColor Yellow
+    Write-Host "         Copilot PR commit lookup and 5-minute empty-PR recheck will be disabled." -ForegroundColor Yellow
+    Write-Host '         Pass -GithubToken on deploy (same as -DtEnvUrl / -DtClientSecret).' -ForegroundColor Yellow
     Write-Host ""
 }
 
@@ -189,6 +205,10 @@ $envVars = @{
     LOG_LEVEL                              = $LogLevel
     PORT                                   = [string]$TargetPort
     GITHUB_WEBHOOK_SECRET                  = $GithubWebhookSecret
+}
+
+if ($GithubToken) {
+    $envVars.GITHUB_TOKEN = $GithubToken
 }
 
 if ($InternalApiKey) {
