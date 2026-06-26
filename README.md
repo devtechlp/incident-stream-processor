@@ -42,6 +42,14 @@ Copy `.env.example` to `.env` and set values to match your environment. The coll
 | `FUNCTION_APP_URL` | Env fallback URL when routing collection/doc is missing or unreadable. |
 | `FUNCTION_APP_KEY` | Env fallback host key (sent as header `x-functions-key`). |
 | `REMEDIATION_ROUTING_COLLECTION` | Optional. MongoDB collection for agent routing (default `remediation_routing`). |
+| `JIRA_BASE_URL` | Required when any routing rule uses `destination: "jira"`. |
+| `JIRA_EMAIL` | Jira API user email. |
+| `JIRA_API_TOKEN` | Jira API token. |
+| `JIRA_PROJECT_KEY` | Jira project key (e.g. `FPI`). |
+| `JIRA_INCIDENT_ISSUETYPE_ID` | Issue type ID for Incident work type. |
+| `JIRA_SERVICE_NAME_FIELD_ID` | Custom field ID for Service Name dropdown. |
+| `JIRA_SERVICE_DESK_ID` | JSM service desk ID (FPI = `2`). With `JIRA_REQUEST_TYPE_ID`, creates portal-visible customer requests. |
+| `JIRA_REQUEST_TYPE_ID` | JSM request type ID (e.g. `86` = Report an Issue). Dynatrace auto-incidents then appear in the portal queue. |
 | `GITHUB_WEBHOOK_SECRET` | Secret for GitHub org webhook HMAC (`x-hub-signature-256`). |
 | `GITHUB_TOKEN` | Recommended. Resolves `Incident MongoDB ID` from PR commits/linked issues and runs the 5-minute empty-PR recheck. |
 | `COPILOT_PR_RECHECK_MS` | Optional. Delay before re-checking an empty Copilot PR (default `300000` = 5 min). |
@@ -55,24 +63,40 @@ Each forward reads the **`remediation_routing`** collection (no cache). Insert a
 ```json
 {
   "_id": "routing",
+  "defaultDestination": "mongo",
   "defaultFunctionAppUrl": "https://incident-remediation-agent-fn.../api/processIncident",
   "defaultFunctionAppKey": "<host key>",
   "rules": [
     {
       "serviceName": "freight-planning-invoice-service",
+      "destination": "mongo",
       "functionAppUrl": "https://incident-remediation-agent-copilot-fn.../api/processIncident",
       "functionAppKey": "<copilot host key>"
     },
     {
       "serviceName": "freight-planning-admin-service",
-      "functionAppUrl": "https://incident-remediation-agent-foundry-fn.../api/processIncident",
-      "functionAppKey": "<foundry host key>"
+      "destination": "jira"
+    },
+    {
+      "serviceName": "freight-planning-transaction-service",
+      "destination": "jira"
     }
   ]
 }
 ```
 
-**Resolution order:** matching `rules[].serviceName` → root `defaultFunctionApp*` → `FUNCTION_APP_URL` / `FUNCTION_APP_KEY` env vars.
+**Resolution order (mongo only):** matching `rules[].serviceName` → root `defaultFunctionApp*` → `FUNCTION_APP_URL` / `FUNCTION_APP_KEY` env vars.
+
+**Destination routing:** each rule (or root `defaultDestination`) may be `"mongo"` (default) or `"jira"`.
+
+| Destination | Behavior |
+|-------------|----------|
+| `mongo` | POST full Mongo document to Gemini/Copilot/Foundry agent |
+| `jira` | Create JSM customer request in Jira — **JSM Automation Rule 1** triggers `incident-remediation-agent-jira` (same as manual portal reports). No agent URL/key needed on the routing rule. |
+
+For `destination: "jira"`, set Jira env vars on this service (see `.env.example`). Dynatrace service names are mapped to Jira Service Name values (`admin`, `transaction`, `invoice`). Override per rule with `jiraServiceName` if needed.
+
+**Portal visibility:** set `JIRA_SERVICE_DESK_ID` + `JIRA_REQUEST_TYPE_ID` (e.g. desk `2`, Report an Issue `86`) so incidents appear in the JSM portal and Automation Rule 1 fires on create.
 
 Example seed file: `scripts/remediation-routing.example.json`. In MongoDB Compass or `mongosh`:
 
@@ -165,13 +189,20 @@ cd C:\SolEng\POC\incident-stream-processor
   -DtClientId "dt0s02...." `
   -DtClientSecret "dt0s02...." `
   -GithubToken "ghp_..." `
-  -GithubWebhookSecret "your-webhook-secret"
+  -GithubWebhookSecret "your-webhook-secret" `
+  -JiraBaseUrl "https://your-org.atlassian.net" `
+  -JiraEmail "bot@company.com" `
+  -JiraApiToken "..." `
+  -JiraProjectKey "FPI" `
+  -JiraIncidentIssuetypeId "10037" `
+  -JiraServiceNameFieldId "customfield_10089"
 ```
 
-`deploy-local.ps1` defaults to **`rg-freight-planning`**, **`acrfreightplanning`**, **`cae-freight-planning`**, and **`incident-stream-proc`**. It auto-resolves `FUNCTION_APP_URL`, `FUNCTION_APP_KEY` (from **incident-remediation-agent-fn**), and checkpoint storage (from **stincidentremediation**) unless you pass them explicitly.
+`deploy-local.ps1` defaults to **`rg-freight-planning`**, **`acrfreightplanning`**, **`cae-freight-planning`**, and **`incident-stream-proc`**. It auto-resolves `FUNCTION_APP_URL`, `FUNCTION_APP_KEY` (from **incident-remediation-agent-fn**), and checkpoint storage (from **stincidentremediation**) unless you pass them explicitly. On redeploy, **Jira vars are reused from the existing Container App** if you omit `-Jira*` params (same as `GITHUB_TOKEN`).
 
 | Switch | Purpose |
 |--------|---------|
+| `-JiraBaseUrl`, `-JiraEmail`, `-JiraApiToken`, `-JiraProjectKey`, `-JiraIncidentIssuetypeId`, `-JiraServiceNameFieldId` | Required together when any routing rule uses `destination: "jira"` |
 | `-SkipBuild` | Update env vars / image tag only (image must already exist in ACR) |
 | `-SkipInfrastructure` | Skip RG / ACR / environment existence checks |
 

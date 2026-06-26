@@ -8,7 +8,13 @@
 #     -DtClientId "dt0s02...." `
 #     -DtClientSecret "dt0s02...." `
 #     -GithubToken "ghp_..." `
-#     -GithubWebhookSecret "your-webhook-secret"
+#     -GithubWebhookSecret "your-webhook-secret" `
+#     -JiraBaseUrl "https://your-org.atlassian.net" `
+#     -JiraEmail "bot@company.com" `
+#     -JiraApiToken "..." `
+#     -JiraProjectKey "FPI" `
+#     -JiraIncidentIssuetypeId "10037" `
+#     -JiraServiceNameFieldId "customfield_10089"
 
 param(
     [string]$ResourceGroup = "rg-freight-planning",
@@ -44,6 +50,15 @@ param(
     [string]$GithubWebhookSecret = "",
     [string]$GithubToken = "",
     [string]$InternalApiKey = "",
+
+    [string]$JiraBaseUrl = "",
+    [string]$JiraEmail = "",
+    [string]$JiraApiToken = "",
+    [string]$JiraProjectKey = "",
+    [string]$JiraIncidentIssuetypeId = "",
+    [string]$JiraServiceNameFieldId = "",
+    [string]$JiraServiceDeskId = "",
+    [string]$JiraRequestTypeId = "",
 
     [string]$PollerServiceNames = "freight-planning-admin-service,freight-planning-transaction-service,freight-planning-invoice-service",
 
@@ -193,6 +208,44 @@ if (-not $GithubToken) {
     Write-Host ""
 }
 
+# Jira — required when remediation_routing uses destination: "jira"
+if (-not $JiraBaseUrl)              { $JiraBaseUrl = Get-ContainerAppEnvValue -Name "JIRA_BASE_URL" }
+if (-not $JiraEmail)                { $JiraEmail = Get-ContainerAppEnvValue -Name "JIRA_EMAIL" }
+if (-not $JiraApiToken)             { $JiraApiToken = Get-ContainerAppEnvValue -Name "JIRA_API_TOKEN" }
+if (-not $JiraProjectKey)           { $JiraProjectKey = Get-ContainerAppEnvValue -Name "JIRA_PROJECT_KEY" }
+if (-not $JiraIncidentIssuetypeId)  { $JiraIncidentIssuetypeId = Get-ContainerAppEnvValue -Name "JIRA_INCIDENT_ISSUETYPE_ID" }
+if (-not $JiraServiceNameFieldId)   { $JiraServiceNameFieldId = Get-ContainerAppEnvValue -Name "JIRA_SERVICE_NAME_FIELD_ID" }
+if (-not $JiraServiceDeskId)        { $JiraServiceDeskId = Get-ContainerAppEnvValue -Name "JIRA_SERVICE_DESK_ID" }
+if (-not $JiraRequestTypeId)        { $JiraRequestTypeId = Get-ContainerAppEnvValue -Name "JIRA_REQUEST_TYPE_ID" }
+
+$jiraVars = @{
+    JIRA_BASE_URL               = $JiraBaseUrl
+    JIRA_EMAIL                  = $JiraEmail
+    JIRA_API_TOKEN              = $JiraApiToken
+    JIRA_PROJECT_KEY            = $JiraProjectKey
+    JIRA_INCIDENT_ISSUETYPE_ID  = $JiraIncidentIssuetypeId
+    JIRA_SERVICE_NAME_FIELD_ID  = $JiraServiceNameFieldId
+    JIRA_SERVICE_DESK_ID        = $JiraServiceDeskId
+    JIRA_REQUEST_TYPE_ID        = $JiraRequestTypeId
+}
+$jiraCoreKeys = @('JIRA_BASE_URL', 'JIRA_EMAIL', 'JIRA_API_TOKEN', 'JIRA_SERVICE_NAME_FIELD_ID')
+$jiraPortalKeys = @('JIRA_SERVICE_DESK_ID', 'JIRA_REQUEST_TYPE_ID')
+$jiraCoreConfigured = ($jiraCoreKeys | ForEach-Object { $jiraVars[$_] }) -notcontains ''
+$jiraPortalConfigured = ($jiraPortalKeys | ForEach-Object { $jiraVars[$_] }) -notcontains ''
+$jiraFullyConfigured = $jiraCoreConfigured -and $jiraPortalConfigured
+
+if ($jiraCoreConfigured -and -not $jiraPortalConfigured) {
+    Write-Host 'WARNING: JIRA_SERVICE_DESK_ID / JIRA_REQUEST_TYPE_ID not set.' -ForegroundColor Yellow
+    Write-Host '         Dynatrace incidents will use REST issue create and will NOT appear in the JSM portal queue.' -ForegroundColor Yellow
+    Write-Host '         Set -JiraServiceDeskId and -JiraRequestTypeId (FPI: desk=2, Report an Issue=86).' -ForegroundColor Yellow
+    Write-Host ""
+} elseif (-not $jiraFullyConfigured) {
+    Write-Host 'NOTE: Jira env vars not set - OK unless remediation_routing uses destination: jira.' -ForegroundColor Yellow
+    Write-Host '      Pass -JiraBaseUrl, -JiraEmail, -JiraApiToken, -JiraServiceNameFieldId,' -ForegroundColor Yellow
+    Write-Host '      -JiraServiceDeskId, -JiraRequestTypeId when enabling Jira routing.' -ForegroundColor Yellow
+    Write-Host ""
+}
+
 $envVars = @{
     MONGO_URI                              = $MongoUri
     MONGO_DB_NAME                          = $MongoDbName
@@ -220,6 +273,20 @@ if ($DtClientId)          { $envVars.DT_CLIENT_ID = $DtClientId }
 if ($DtClientSecret)      { $envVars.DT_CLIENT_SECRET = $DtClientSecret }
 if ($DynatraceWebhookToken) { $envVars.DYNATRACE_WEBHOOK_TOKEN = $DynatraceWebhookToken }
 if ($PollerServiceNames)  { $envVars.POLLER_SERVICE_NAMES = $PollerServiceNames }
+
+if ($jiraFullyConfigured) {
+    foreach ($key in ($jiraVars.Keys | Sort-Object)) {
+        if ($jiraVars[$key]) {
+            $envVars[$key] = $jiraVars[$key]
+        }
+    }
+} elseif ($jiraCoreConfigured) {
+    foreach ($key in ($jiraCoreKeys + @('JIRA_PROJECT_KEY', 'JIRA_INCIDENT_ISSUETYPE_ID'))) {
+        if ($jiraVars[$key]) {
+            $envVars[$key] = $jiraVars[$key]
+        }
+    }
+}
 
 $envArgs = Get-ContainerAppEnvArgs -Env $envVars
 
@@ -419,6 +486,15 @@ Write-Host "  FUNCTION_APP_URL=$FunctionAppUrl" -ForegroundColor White
 Write-Host "  MONGO_DB_NAME=$MongoDbName" -ForegroundColor White
 Write-Host "  MONGO_COLLECTION=$MongoCollection" -ForegroundColor White
 Write-Host "  CHECKPOINT_CONTAINER=$CheckpointContainer" -ForegroundColor White
+if ($jiraFullyConfigured) {
+    Write-Host "  JIRA_BASE_URL=$JiraBaseUrl" -ForegroundColor White
+    Write-Host "  JIRA_REQUEST_TYPE_ID=$JiraRequestTypeId (portal customer request)" -ForegroundColor White
+    Write-Host '  Jira routing: configured with JSM request type' -ForegroundColor White
+} elseif ($jiraCoreConfigured) {
+    Write-Host '  Jira routing: partial (missing desk/request type - portal queue disabled)' -ForegroundColor White
+} else {
+    Write-Host '  Jira routing: not configured (pass -Jira* params to enable)' -ForegroundColor White
+}
 Write-Host ""
 
 Write-Host "Next steps:" -ForegroundColor Yellow

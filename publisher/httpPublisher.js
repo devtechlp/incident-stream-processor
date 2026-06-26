@@ -1,11 +1,11 @@
 const axios = require('axios');
 const logger = require('../utils/logger');
-const { resolveAgentEndpoint, resolveServiceName } = require('./agentRouter');
+const { resolveDispatchConfig } = require('./agentRouter');
 const { claimIncidentForDispatch, releaseDispatchClaim } = require('./dispatchClaim');
 
-async function publish(doc) {
-  const { url, key, source } = await resolveAgentEndpoint(doc);
-  const serviceName = resolveServiceName(doc);
+async function publish(doc, config) {
+  const dispatch = config || (await resolveDispatchConfig(doc));
+  const { url, key, source, serviceName } = dispatch;
 
   const claimed = await claimIncidentForDispatch(doc, url);
   if (!claimed) {

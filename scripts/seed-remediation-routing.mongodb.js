@@ -12,21 +12,25 @@ const dbName = "incident_management";
 
 const routing = {
   _id: "routing",
+  defaultDestination: "mongo",
   defaultFunctionAppUrl:
     "https://incident-remediation-agent-fn.azurewebsites.net/api/processIncident",
   defaultFunctionAppKey: "<incident-remediation-agent-fn host key>",
   rules: [
     {
       serviceName: "freight-planning-invoice-service",
+      destination: "mongo",
       functionAppUrl:
         "https://incident-remediation-agent-copilot-fn.azurewebsites.net/api/processIncident",
       functionAppKey: "<incident-remediation-agent-copilot-fn host key>",
     },
     {
       serviceName: "freight-planning-admin-service",
-      functionAppUrl:
-        "https://incident-remediation-agent-foundry-fn.azurewebsites.net/api/processIncident",
-      functionAppKey: "<incident-remediation-agent-foundry-fn host key>",
+      destination: "jira",
+    },
+    {
+      serviceName: "freight-planning-transaction-service",
+      destination: "jira",
     },
   ],
 };

@@ -5,7 +5,8 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "test:copilot-pr": "node test/copilot-pr-validation.test.js"
+    "test:copilot-pr": "node test/copilot-pr-validation.test.js",
+    "test:jira-mapper": "node test/jira-incident-mapper.test.js"
   },
   "dependencies": {
     "@azure/storage-blob": "^12.31.0",
