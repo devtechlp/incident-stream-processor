@@ -12,6 +12,7 @@ const {
   cancelScheduledRecheck,
   scheduleEmptyCopilotPrRecheck,
 } = require('../services/copilotPrRecheck');
+const { logCopilotRemediationUsage, logLlmInvocation, estimateTokens } = require('../services/llmInvocationLogger');
 
 const router = express.Router();
 
@@ -65,6 +66,8 @@ async function handlePullRequest(payload) {
       prBranch: pr.head?.ref,
     });
 
+    await logCopilotRemediationUsage(mongoId, pr, 'copilot_pr_opened');
+
     return { handled: true, mongoId, result, action, deliverable: true };
   }
 
@@ -114,6 +117,16 @@ async function handleIssueCommentCreated(payload) {
     healingStatus: 'ESCALATED',
     escalationReason,
     issueUrl: issue.html_url,
+  });
+
+  await logLlmInvocation({
+    incidentId: mongoId,
+    model: process.env.COPILOT_MODEL || 'github-copilot-swe',
+    provider: 'github-copilot',
+    step: 'copilot_escalated',
+    promptTokens: estimateTokens(comment.body),
+    completionTokens: estimateTokens(escalationReason),
+    metadata: { issueNumber: issue.number, issueUrl: issue.html_url },
   });
 
   return { handled: true, mongoId, result };
