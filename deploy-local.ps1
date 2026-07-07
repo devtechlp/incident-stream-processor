@@ -49,6 +49,10 @@ param(
     [string]$LogLevel = "info",
     [string]$GithubWebhookSecret = "",
     [string]$GithubToken = "",
+    [string]$GithubOrg = "",
+    [string]$CopilotBillingMode = "ai_credits",
+    [string]$CopilotModel = "claude-sonnet-5",
+    [string]$CopilotCreditUsdRate = "0.01",
     [string]$InternalApiKey = "",
 
     [string]$JiraBaseUrl = "",
@@ -201,6 +205,35 @@ if (-not $GithubToken) {
     $GithubToken = Get-ContainerAppEnvValue -Name "GITHUB_TOKEN"
 }
 
+if (-not $GithubOrg) {
+    $GithubOrg = Get-ContainerAppEnvValue -Name "GITHUB_ORG"
+}
+
+if (-not $GithubOrg) {
+    $GithubOrg = "devtechlp"
+}
+
+if (-not $CopilotBillingMode) {
+    $CopilotBillingMode = Get-ContainerAppEnvValue -Name "COPILOT_BILLING_MODE"
+}
+if (-not $CopilotBillingMode) {
+    $CopilotBillingMode = "ai_credits"
+}
+
+if (-not $CopilotModel) {
+    $CopilotModel = Get-ContainerAppEnvValue -Name "COPILOT_MODEL"
+}
+if (-not $CopilotModel) {
+    $CopilotModel = "claude-sonnet-5"
+}
+
+if (-not $CopilotCreditUsdRate) {
+    $CopilotCreditUsdRate = Get-ContainerAppEnvValue -Name "COPILOT_CREDIT_USD_RATE"
+}
+if (-not $CopilotCreditUsdRate) {
+    $CopilotCreditUsdRate = "0.01"
+}
+
 if (-not $GithubToken) {
     Write-Host "WARNING: GITHUB_TOKEN not set." -ForegroundColor Yellow
     Write-Host "         Copilot PR commit lookup and 5-minute empty-PR recheck will be disabled." -ForegroundColor Yellow
@@ -263,6 +296,11 @@ $envVars = @{
 if ($GithubToken) {
     $envVars.GITHUB_TOKEN = $GithubToken
 }
+
+$envVars.GITHUB_ORG = $GithubOrg
+$envVars.COPILOT_BILLING_MODE = $CopilotBillingMode
+$envVars.COPILOT_MODEL = $CopilotModel
+$envVars.COPILOT_CREDIT_USD_RATE = $CopilotCreditUsdRate
 
 if ($InternalApiKey) {
     $envVars.INTERNAL_API_KEY = $InternalApiKey

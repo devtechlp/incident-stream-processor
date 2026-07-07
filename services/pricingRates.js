@@ -1,8 +1,6 @@
 /**
  * Versioned LLM pricing — canonical module (keep agent copies in sync).
- *
- * Lookup: latest row where model matches and effectiveFrom <= invocation time.
- * Cache refreshes every PRICING_CACHE_TTL_MS so Mongo updates apply without redeploy.
+ * See mongodb/lib/pricingRates.js
  */
 
 const PRICING_CACHE_TTL_MS = Number(process.env.PRICING_CACHE_TTL_MS || 60000);
@@ -43,13 +41,45 @@ function resolveRate(rows, model, asOf = new Date()) {
   return match || null;
 }
 
-function calcCostFromRate(rate, promptTokens = 0, completionTokens = 0) {
-  const inputPer1k = rate?.inputPer1kUsd ?? 0;
-  const outputPer1k = rate?.outputPer1kUsd ?? 0;
-  const inputCostUsd = (promptTokens / 1000) * inputPer1k;
-  const outputCostUsd = (completionTokens / 1000) * outputPer1k;
+function normalizeRateFields(rate) {
+  if (!rate) {
+    return { inputPerM: 0, cachedInputPerM: 0, outputPerM: 0, currency: 'USD' };
+  }
+
+  if (rate.inputPer1MUsd != null) {
+    return {
+      inputPerM: Number(rate.inputPer1MUsd) || 0,
+      cachedInputPerM: Number(rate.cachedInputPer1MUsd ?? rate.inputPer1MUsd) || 0,
+      outputPerM: Number(rate.outputPer1MUsd) || 0,
+      currency: rate.currency || 'USD',
+    };
+  }
+
+  if (rate.inputPer1kUsd != null) {
+    return {
+      inputPerM: (Number(rate.inputPer1kUsd) || 0) * 1000,
+      cachedInputPerM: (Number(rate.cachedInputPer1kUsd ?? rate.inputPer1kUsd) || 0) * 1000,
+      outputPerM: (Number(rate.outputPer1kUsd) || 0) * 1000,
+      currency: rate.currency || 'USD',
+    };
+  }
+
+  return { inputPerM: 0, cachedInputPerM: 0, outputPerM: 0, currency: rate.currency || 'USD' };
+}
+
+function calcCostFromRate(rate, promptTokens = 0, completionTokens = 0, cachedTokens = 0) {
+  const { inputPerM, cachedInputPerM, outputPerM } = normalizeRateFields(rate);
+  const cached = Math.min(Math.max(0, Number(cachedTokens) || 0), Math.max(0, promptTokens));
+  const uncachedInput = Math.max(0, promptTokens - cached);
+
+  const uncachedInputCostUsd = (uncachedInput / 1_000_000) * inputPerM;
+  const cachedInputCostUsd = (cached / 1_000_000) * cachedInputPerM;
+  const inputCostUsd = uncachedInputCostUsd + cachedInputCostUsd;
+  const outputCostUsd = (completionTokens / 1_000_000) * outputPerM;
+
   return {
     inputCostUsd: Number(inputCostUsd.toFixed(6)),
+    cachedInputCostUsd: Number(cachedInputCostUsd.toFixed(6)),
     outputCostUsd: Number(outputCostUsd.toFixed(6)),
     totalCostUsd: Number((inputCostUsd + outputCostUsd).toFixed(6)),
   };
@@ -57,25 +87,53 @@ function calcCostFromRate(rate, promptTokens = 0, completionTokens = 0) {
 
 function pricingSnapshot(rate) {
   if (!rate) return null;
-  return {
+
+  const snap = {
     pricingRateId: rate._id ? String(rate._id) : undefined,
     model: rate.model,
     provider: rate.provider || null,
-    inputPer1kUsd: rate.inputPer1kUsd,
-    outputPer1kUsd: rate.outputPer1kUsd,
+    currency: rate.currency || 'USD',
     effectiveFrom: rate.effectiveFrom,
     sourceUrl: rate.sourceUrl || null,
     sourceLabel: rate.sourceLabel || null,
   };
+
+  if (rate.inputPer1MUsd != null) {
+    snap.inputPer1MUsd = rate.inputPer1MUsd;
+    snap.cachedInputPer1MUsd = rate.cachedInputPer1MUsd ?? null;
+    snap.outputPer1MUsd = rate.outputPer1MUsd;
+  } else {
+    snap.inputPer1kUsd = rate.inputPer1kUsd;
+    snap.outputPer1kUsd = rate.outputPer1kUsd;
+  }
+
+  return snap;
 }
 
 function staticFallbackRate(model, fallbackMap, asOf = new Date()) {
   const entry = fallbackMap[model] || fallbackMap.default;
   if (!entry) return null;
+
+  const resolvedModel = fallbackMap[model] ? model : 'default';
+
+  if (entry.inputPer1MUsd != null) {
+    return {
+      model: resolvedModel,
+      inputPer1MUsd: entry.inputPer1MUsd,
+      cachedInputPer1MUsd: entry.cachedInputPer1MUsd ?? entry.inputPer1MUsd,
+      outputPer1MUsd: entry.outputPer1MUsd,
+      currency: entry.currency || 'USD',
+      provider: entry.provider || null,
+      effectiveFrom: asOf,
+      sourceLabel: 'static-fallback (no pricing_rates row for invocation date)',
+    };
+  }
+
   return {
-    model: fallbackMap[model] ? model : 'default',
+    model: resolvedModel,
     inputPer1kUsd: entry.inputPer1kUsd,
     outputPer1kUsd: entry.outputPer1kUsd,
+    currency: entry.currency || 'USD',
     provider: entry.provider || null,
     effectiveFrom: asOf,
     sourceLabel: 'static-fallback (no pricing_rates row for invocation date)',
@@ -93,6 +151,7 @@ module.exports = {
   loadPricingRows,
   resolveRate,
   resolveRateForModel,
+  normalizeRateFields,
   calcCostFromRate,
   pricingSnapshot,
   invalidatePricingCache,

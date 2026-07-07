@@ -12,7 +12,8 @@ const {
   cancelScheduledRecheck,
   scheduleEmptyCopilotPrRecheck,
 } = require('../services/copilotPrRecheck');
-const { logCopilotRemediationUsage, logLlmInvocation, estimateTokens } = require('../services/llmInvocationLogger');
+const { logLlmInvocation, estimateTokens } = require('../services/llmInvocationLogger');
+const { finalizeCopilotBilling } = require('../services/copilotBilling');
 
 const router = express.Router();
 
@@ -66,7 +67,7 @@ async function handlePullRequest(payload) {
       prBranch: pr.head?.ref,
     });
 
-    await logCopilotRemediationUsage(mongoId, pr, 'copilot_pr_opened');
+    await finalizeCopilotBilling(mongoId, { pr, repository, step: 'copilot_ai_credits_session' });
 
     return { handled: true, mongoId, result, action, deliverable: true };
   }
@@ -121,7 +122,7 @@ async function handleIssueCommentCreated(payload) {
 
   await logLlmInvocation({
     incidentId: mongoId,
-    model: process.env.COPILOT_MODEL || 'github-copilot-swe',
+    model: process.env.COPILOT_MODEL || 'claude-sonnet-5',
     provider: 'github-copilot',
     step: 'copilot_escalated',
     promptTokens: estimateTokens(comment.body),

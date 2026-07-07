@@ -2,6 +2,7 @@ const axios = require('axios');
 const { BlobServiceClient } = require('@azure/storage-blob');
 const { getDB } = require('../config/db');
 const logger = require('../utils/logger');
+const { ingestIncidentDocument } = require('./incidentIngest');
 
 // ── Config ────────────────────────────────────────────────────────────────────
 const DT_ENV_URL       = process.env.DT_ENV_URL;
@@ -302,23 +303,7 @@ async function poll() {
 
     for (const record of incidentRecords) {
       const doc = mapToIncidentDocument(record);
-      const { lastSeenAt, occurrenceCount, ...insertDoc } = doc;
-
-      const result = await col.updateOne(
-        { incidentKey: doc.incidentKey },
-        {
-          $setOnInsert: insertDoc,
-          $set:         { lastSeenAt: new Date(record.timestamp) },
-          $inc:         { occurrenceCount: 1 },
-        },
-        { upsert: true }
-      );
-
-      if (result.upsertedCount > 0) {
-        logger.info(`Dynatrace log poller: NEW incident — ${doc.incidentKey}`);
-      } else {
-        logger.info(`Dynatrace log poller: DUPLICATE — ${doc.incidentKey} (count incremented)`);
-      }
+      await ingestIncidentDocument(col, doc, record.timestamp);
     }
 
     logger.info(`Dynatrace log poller: processed ${incidentRecords.length} error(s)`);

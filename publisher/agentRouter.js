@@ -51,6 +51,17 @@ function findRuleForService(routing, serviceName) {
 async function resolveDispatchConfig(doc) {
   const serviceName = resolveServiceName(doc);
 
+  if (doc.isBenchmark && doc.targetFunctionAppUrl) {
+    return {
+      serviceName,
+      destination: 'mongo',
+      url: doc.targetFunctionAppUrl,
+      key: doc.targetFunctionAppKey || '',
+      source: `benchmark:${doc.benchmarkAgent || 'unknown'}`,
+      jiraServiceName: undefined,
+    };
+  }
+
   let routing = null;
   try {
     routing = await loadRoutingDoc();

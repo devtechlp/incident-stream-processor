@@ -5,7 +5,7 @@ const {
   hasDeliverableChanges,
   resolveIncidentMongoId,
 } = require('./copilotPrValidation');
-const { logCopilotRemediationUsage } = require('./llmInvocationLogger');
+const { finalizeCopilotBilling } = require('./copilotBilling');
 
 const pendingTimers = new Map();
 
@@ -49,7 +49,11 @@ async function recheckCopilotPr({ mongoId, owner, repo, pullNumber, prUrl }) {
         prUrl: pr.html_url || prUrl,
         prBranch: pr.head?.ref,
       });
-      await logCopilotRemediationUsage(resolvedMongoId, pr, 'copilot_pr_recheck');
+      await finalizeCopilotBilling(resolvedMongoId, {
+        pr,
+        repository: { owner: { login: owner }, name: repo },
+        step: 'copilot_ai_credits_session',
+      });
       logger.info(`Copilot PR recheck: PR #${pullNumber} now has changes -> PR_RAISED`);
       return { ok: true, outcome: 'PR_RAISED', result };
     }
