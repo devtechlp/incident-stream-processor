@@ -4,6 +4,7 @@ const logger = require('../utils/logger');
 
 const ALLOWED_STATUSES = new Set(['PR_RAISED', 'ESCALATED']);
 const UPDATABLE_FROM = new Set(['ISSUE_CREATED', 'IN_PROGRESS']);
+const PR_RAISED_REPAIR_FROM = new Set(['ISSUE_CREATED', 'IN_PROGRESS', 'FAILED']);
 
 /** Match issue/PR bodies stamped by incident-remediation-agent-copilot-fn */
 const INCIDENT_ID_RE = /Incident MongoDB ID:\s*`?([a-f\d]{24})`?/i;
@@ -38,6 +39,13 @@ function buildUpdateFields({ healingStatus, prUrl, prBranch, escalationReason, i
   }
 
   return fields;
+}
+
+function canTransitionTo(healingStatus, currentStatus) {
+  if (healingStatus === 'PR_RAISED') {
+    return PR_RAISED_REPAIR_FROM.has(currentStatus);
+  }
+  return UPDATABLE_FROM.has(currentStatus);
 }
 
 /**
@@ -87,7 +95,7 @@ async function updateIncidentStatus(mongoIdRaw, update) {
     };
   }
 
-  if (!UPDATABLE_FROM.has(existing.healingStatus)) {
+  if (!canTransitionTo(healingStatus, existing.healingStatus)) {
     return {
       ok: false,
       statusCode: 409,
@@ -99,7 +107,11 @@ async function updateIncidentStatus(mongoIdRaw, update) {
   }
 
   const fields = buildUpdateFields(update);
-  await col.updateOne({ _id: mongoId }, { $set: fields });
+  const updateDoc = { $set: fields };
+  if (healingStatus === 'PR_RAISED' && existing.healingStatus === 'FAILED') {
+    updateDoc.$unset = { agent_error: '' };
+  }
+  await col.updateOne({ _id: mongoId }, updateDoc);
 
   logger.info(`Incident ${mongoId}: ${existing.healingStatus} -> ${healingStatus}`);
   return {

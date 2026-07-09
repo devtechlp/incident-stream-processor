@@ -8,10 +8,16 @@ const {
 const { finalizeCopilotBilling } = require('./copilotBilling');
 
 const pendingTimers = new Map();
+const recheckAttempts = new Map();
 
 function recheckDelayMs() {
   const configured = Number(process.env.COPILOT_PR_RECHECK_MS);
   return Number.isFinite(configured) && configured > 0 ? configured : 300000;
+}
+
+function maxRecheckAttempts() {
+  const configured = Number(process.env.COPILOT_PR_RECHECK_MAX_ATTEMPTS);
+  return Number.isFinite(configured) && configured > 0 ? configured : 3;
 }
 
 function scheduleKey(owner, repo, pullNumber) {
@@ -25,9 +31,10 @@ function cancelScheduledRecheck(owner, repo, pullNumber) {
     clearTimeout(timer);
     pendingTimers.delete(key);
   }
+  recheckAttempts.delete(key);
 }
 
-async function recheckCopilotPr({ mongoId, owner, repo, pullNumber, prUrl }) {
+async function recheckCopilotPr({ mongoId, owner, repo, pullNumber, prUrl, attempt = 1 }) {
   if (!process.env.GITHUB_TOKEN) {
     logger.warn(`Copilot PR recheck skipped for #${pullNumber} — GITHUB_TOKEN not set`);
     return { ok: false, reason: 'GITHUB_TOKEN not set' };
@@ -58,6 +65,33 @@ async function recheckCopilotPr({ mongoId, owner, repo, pullNumber, prUrl }) {
       return { ok: true, outcome: 'PR_RAISED', result };
     }
 
+    const key = scheduleKey(owner, repo, pullNumber);
+    const maxAttempts = maxRecheckAttempts();
+
+    if (attempt < maxAttempts) {
+      recheckAttempts.set(key, attempt + 1);
+      const delayMs = recheckDelayMs();
+      const timer = setTimeout(() => {
+        pendingTimers.delete(key);
+        recheckCopilotPr({
+          mongoId: resolvedMongoId,
+          owner,
+          repo,
+          pullNumber,
+          prUrl: pr.html_url || prUrl,
+          attempt: attempt + 1,
+        }).catch((err) => {
+          logger.error(`Scheduled Copilot PR recheck error: ${err.message}`);
+        });
+      }, delayMs);
+      pendingTimers.set(key, timer);
+      logger.info(
+        `Copilot PR #${pullNumber} still empty (attempt ${attempt}/${maxAttempts}) — next recheck in ${Math.round(delayMs / 1000)}s`
+      );
+      return { ok: true, outcome: 'RECHECK_SCHEDULED', attempt };
+    }
+
+    recheckAttempts.delete(key);
     const result = await markCopilotPrFailed(resolvedMongoId, {
       prUrl: pr.html_url || prUrl,
       reason: 'Copilot PR had no file changes after recheck window',
@@ -76,6 +110,7 @@ function scheduleEmptyCopilotPrRecheck({ mongoId, pr, owner, repo }) {
   const key = scheduleKey(owner, repo, pr.number);
   if (pendingTimers.has(key)) return;
 
+  recheckAttempts.set(key, 1);
   const delayMs = recheckDelayMs();
   const timer = setTimeout(() => {
     pendingTimers.delete(key);

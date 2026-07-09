@@ -8,7 +8,8 @@ const LINKED_ISSUE_RE = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)\b/
 const ISSUE_REF_RE = /#(\d+)\b/g;
 
 function hasDeliverableChanges(pr) {
-  return Number(pr?.changed_files) > 0;
+  if (Number(pr?.changed_files) > 0) return true;
+  return Number(pr?.additions || 0) + Number(pr?.deletions || 0) > 0;
 }
 
 function isLikelyCopilotPr(pr) {
