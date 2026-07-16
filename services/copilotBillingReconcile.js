@@ -8,6 +8,8 @@ const {
   isAiCreditsBillingEnabled,
 } = require('./githubAiCredits');
 const { logCopilotAiCreditUsage } = require('./llmInvocationLogger');
+const { resolveBillingDayAt } = require('./copilotBillingUtils');
+const { resolveEffectiveBeforeSnapshot } = require('./copilotBillingChain');
 const { maybeAdvanceCopilotModelQueue } = require('./copilotModelOrchestrator');
 
 const pendingTimers = new Map();
@@ -77,7 +79,8 @@ async function reconcileCopilotBilling(mongoId, { attempt = 1, prMetadata = {} }
 
   const repoFullName = incident.githubRepo || null;
   const billingAt = resolveBillingDayAt(incident);
-  const before = resolveBeforeSnapshot(incident);
+  const db = await getDB();
+  const { before, chainedBefore, preBenchmarkBefore, issueBefore, deltaBasis } = await resolveEffectiveBeforeSnapshot(incident, db);
 
   try {
     const after = await fetchOrgAiCreditUsageWithRetry({ repository: repoFullName, at: billingAt });
@@ -88,6 +91,10 @@ async function reconcileCopilotBilling(mongoId, { attempt = 1, prMetadata = {} }
       before,
       after,
       delta,
+      chainedBefore: chainedBefore || null,
+      preBenchmarkBefore: preBenchmarkBefore || null,
+      issueBefore: issueBefore || null,
+      deltaBasis,
       lastReconcileAttempt: attempt,
       lastReconcileAt: new Date().toISOString(),
     });
@@ -107,6 +114,7 @@ async function reconcileCopilotBilling(mongoId, { attempt = 1, prMetadata = {} }
           billingAccount: after.billingAccount,
           billingUser: after.user,
           quantityBasis: delta.quantityBasis,
+          deltaBasis,
           reconciled: true,
           reconcileAttempt: attempt,
         },

@@ -7,6 +7,7 @@ const {
   isCopilotModelBenchmarkEnabled,
 } = require('./copilotBenchmarkConfig');
 const { QUEUED_STATUS } = require('./copilotModelOrchestrator');
+const { captureCopilotBillingBaseline } = require('./copilotBillingBaseline');
 
 function pickPayloadSnapshot(doc) {
   return {
@@ -205,6 +206,16 @@ async function createBenchmarkIncidents(baseDoc) {
 
   if (copilotModelBenchmark) {
     runDoc.copilotModelBenchmark = copilotModelBenchmark;
+    runDoc.copilotBillingBaseline = await captureCopilotBillingBaseline({ at: now });
+    if (runDoc.copilotBillingBaseline?.aiCredits != null) {
+      logger.info(
+        `Benchmark run ${String(runId)}: GitHub billing baseline `
+        + `${runDoc.copilotBillingBaseline.aiCredits} credits `
+        + `(${runDoc.copilotBillingBaseline.source || 'ai_credit/usage'})`,
+      );
+    } else {
+      logger.warn(`Benchmark run ${String(runId)}: no GitHub billing baseline captured at run start`);
+    }
   }
 
   await runsCol.insertOne(runDoc);
