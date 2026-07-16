@@ -42,6 +42,9 @@ async function get(label, url, query = {}) {
 async function main() {
   if (!token) throw new Error('GITHUB_TOKEN missing');
   const monthParams = { year: params.year, month: params.month };
+  await get('users/{user}/ai_credit/usage', `https://api.github.com/users/${process.env.COPILOT_BILLING_USER || 'lavanyapamula-lp'}/settings/billing/ai_credit/usage`, {
+    product: 'copilot',
+  });
   await get('ai_credit/usage (org day)', `https://api.github.com/organizations/${org}/settings/billing/ai_credit/usage`, {
     product: 'copilot',
   });

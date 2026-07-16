@@ -9,6 +9,7 @@
 #     -DtClientSecret "dt0s02...." `
 #     -GithubToken "ghp_..." `
 #     -GithubWebhookSecret "your-webhook-secret" `
+#     -CopilotBillingUser "lavanyapamula-lp" `
 #     -JiraBaseUrl "https://your-org.atlassian.net" `
 #     -JiraEmail "bot@company.com" `
 #     -JiraApiToken "..." `
@@ -51,6 +52,7 @@ param(
     [string]$GithubToken = "",
     [string]$GithubOrg = "",
     [string]$CopilotBillingMode = "ai_credits",
+    [string]$CopilotBillingUser = "",
     [string]$CopilotModel = "claude-sonnet-5",
     [string]$CopilotCreditUsdRate = "0.01",
     [string]$InternalApiKey = "",
@@ -220,6 +222,10 @@ if (-not $CopilotBillingMode) {
     $CopilotBillingMode = "ai_credits"
 }
 
+if (-not $CopilotBillingUser) {
+    $CopilotBillingUser = Get-ContainerAppEnvValue -Name "COPILOT_BILLING_USER"
+}
+
 if (-not $CopilotModel) {
     $CopilotModel = Get-ContainerAppEnvValue -Name "COPILOT_MODEL"
 }
@@ -238,6 +244,13 @@ if (-not $GithubToken) {
     Write-Host "WARNING: GITHUB_TOKEN not set." -ForegroundColor Yellow
     Write-Host "         Copilot PR commit lookup and 5-minute empty-PR recheck will be disabled." -ForegroundColor Yellow
     Write-Host '         Pass -GithubToken on deploy (same as -DtEnvUrl / -DtClientSecret).' -ForegroundColor Yellow
+    Write-Host ""
+}
+
+if (-not $CopilotBillingUser) {
+    Write-Host "WARNING: COPILOT_BILLING_USER not set." -ForegroundColor Yellow
+    Write-Host "         Copilot AI credit billing will fall back to org-only (often empty)." -ForegroundColor Yellow
+    Write-Host "         Pass -CopilotBillingUser on deploy (e.g. lavanyapamula-lp)." -ForegroundColor Yellow
     Write-Host ""
 }
 
@@ -301,6 +314,10 @@ $envVars.GITHUB_ORG = $GithubOrg
 $envVars.COPILOT_BILLING_MODE = $CopilotBillingMode
 $envVars.COPILOT_MODEL = $CopilotModel
 $envVars.COPILOT_CREDIT_USD_RATE = $CopilotCreditUsdRate
+
+if ($CopilotBillingUser) {
+    $envVars.COPILOT_BILLING_USER = $CopilotBillingUser
+}
 
 if ($InternalApiKey) {
     $envVars.INTERNAL_API_KEY = $InternalApiKey
