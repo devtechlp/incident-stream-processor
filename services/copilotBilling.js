@@ -5,10 +5,11 @@ const { getDB } = require('../config/db');
 const logger = require('../utils/logger');
 
 const {
-  fetchOrgAiCreditUsageWithRetry,
+  fetchAiCreditUsageWithRetry,
   diffUsageSnapshots,
   hasBillableDelta,
   isAiCreditsBillingEnabled,
+  alignBeforeSnapshotWithAfter,
 } = require('./githubAiCredits');
 
 const { logCopilotAiCreditUsage, logCopilotRemediationUsage } = require('./llmInvocationLogger');
@@ -77,17 +78,22 @@ async function finalizeCopilotBilling(mongoId, { pr, repository, step = 'copilot
     const db = await getDB();
     const billingAt = resolveBillingDayAt(incident, pr);
     const { before, chainedBefore, preBenchmarkBefore, issueBefore, deltaBasis } = await resolveEffectiveBeforeSnapshot(incident, db);
-    const after = await fetchOrgAiCreditUsageWithRetry({ repository: repoFullName, at: billingAt });
-    const delta = diffUsageSnapshots(before, after);
+    const after = await fetchAiCreditUsageWithRetry({ repository: repoFullName, at: billingAt });
+    const alignedBefore = await alignBeforeSnapshotWithAfter(before, after, {
+      repository: repoFullName,
+      at: before?.capturedAt ? new Date(before.capturedAt) : billingAt,
+    });
+    const delta = diffUsageSnapshots(alignedBefore, after);
 
     await saveUsageSnapshot(mongoId, {
-      before,
+      before: alignedBefore,
       after,
       delta,
       chainedBefore: chainedBefore || null,
       preBenchmarkBefore: preBenchmarkBefore || null,
       issueBefore: issueBefore || null,
       deltaBasis,
+      ...(alignedBefore !== before ? { realignedFromBefore: before } : {}),
     });
 
     if (!hasBillableDelta(delta)) {
@@ -115,7 +121,7 @@ async function finalizeCopilotBilling(mongoId, { pr, repository, step = 'copilot
     });
 
     const result = await logCopilotAiCreditUsage(mongoId, {
-      before,
+      before: alignedBefore,
       after,
       delta,
       model: delta.models?.[0] || incident.copilotAssignment?.model,

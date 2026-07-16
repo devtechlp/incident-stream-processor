@@ -10,6 +10,7 @@
 #     -GithubToken "ghp_..." `
 #     -GithubWebhookSecret "your-webhook-secret" `
 #     -CopilotBillingUser "lavanyapamula-lp" `
+#     -CopilotBillingAccount "user" `
 #     -JiraBaseUrl "https://your-org.atlassian.net" `
 #     -JiraEmail "bot@company.com" `
 #     -JiraApiToken "..." `
@@ -53,6 +54,7 @@ param(
     [string]$GithubOrg = "",
     [string]$CopilotBillingMode = "ai_credits",
     [string]$CopilotBillingUser = "",
+    [string]$CopilotBillingAccount = "user",
     [string]$CopilotModel = "claude-sonnet-5",
     [string]$CopilotCreditUsdRate = "0.01",
     [string]$InternalApiKey = "",
@@ -226,6 +228,13 @@ if (-not $CopilotBillingUser) {
     $CopilotBillingUser = Get-ContainerAppEnvValue -Name "COPILOT_BILLING_USER"
 }
 
+if (-not $CopilotBillingAccount) {
+    $CopilotBillingAccount = Get-ContainerAppEnvValue -Name "COPILOT_BILLING_ACCOUNT"
+}
+if (-not $CopilotBillingAccount) {
+    $CopilotBillingAccount = "user"
+}
+
 if (-not $CopilotModel) {
     $CopilotModel = Get-ContainerAppEnvValue -Name "COPILOT_MODEL"
 }
@@ -317,6 +326,10 @@ $envVars.COPILOT_CREDIT_USD_RATE = $CopilotCreditUsdRate
 
 if ($CopilotBillingUser) {
     $envVars.COPILOT_BILLING_USER = $CopilotBillingUser
+}
+
+if ($CopilotBillingAccount) {
+    $envVars.COPILOT_BILLING_ACCOUNT = $CopilotBillingAccount
 }
 
 if ($InternalApiKey) {

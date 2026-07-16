@@ -2,10 +2,11 @@ const { ObjectId } = require('mongodb');
 const { getDB } = require('../config/db');
 const logger = require('../utils/logger');
 const {
-  fetchOrgAiCreditUsageWithRetry,
+  fetchAiCreditUsageWithRetry,
   diffUsageSnapshots,
   hasBillableDelta,
   isAiCreditsBillingEnabled,
+  alignBeforeSnapshotWithAfter,
 } = require('./githubAiCredits');
 const { logCopilotAiCreditUsage } = require('./llmInvocationLogger');
 const { resolveBillingDayAt } = require('./copilotBillingUtils');
@@ -57,7 +58,7 @@ async function setBillingStatus(mongoId, fields) {
 }
 
 /**
- * Re-fetch org ai_credit/usage and upgrade estimated billing when GitHub eventually reports items.
+ * Re-fetch user/org ai_credit/usage and upgrade estimated billing when GitHub eventually reports items.
  * The billing UI can show Copilot Cloud Agent credits before this REST endpoint populates usageItems.
  */
 async function reconcileCopilotBilling(mongoId, { attempt = 1, prMetadata = {} } = {}) {
@@ -83,12 +84,16 @@ async function reconcileCopilotBilling(mongoId, { attempt = 1, prMetadata = {} }
   const { before, chainedBefore, preBenchmarkBefore, issueBefore, deltaBasis } = await resolveEffectiveBeforeSnapshot(incident, db);
 
   try {
-    const after = await fetchOrgAiCreditUsageWithRetry({ repository: repoFullName, at: billingAt });
-    const delta = diffUsageSnapshots(before, after);
+    const after = await fetchAiCreditUsageWithRetry({ repository: repoFullName, at: billingAt });
+    const alignedBefore = await alignBeforeSnapshotWithAfter(before, after, {
+      repository: repoFullName,
+      at: before?.capturedAt ? new Date(before.capturedAt) : billingAt,
+    });
+    const delta = diffUsageSnapshots(alignedBefore, after);
 
     await saveUsageSnapshot(mongoId, {
       ...incident.copilotUsageSnapshot,
-      before,
+      before: alignedBefore,
       after,
       delta,
       chainedBefore: chainedBefore || null,
@@ -97,12 +102,13 @@ async function reconcileCopilotBilling(mongoId, { attempt = 1, prMetadata = {} }
       deltaBasis,
       lastReconcileAttempt: attempt,
       lastReconcileAt: new Date().toISOString(),
+      ...(alignedBefore !== before ? { realignedFromBefore: before } : {}),
     });
 
     if (hasBillableDelta(delta)) {
       cancelScheduledBillingReconcile(mongoId);
       await logCopilotAiCreditUsage(mongoId, {
-        before,
+        before: alignedBefore,
         after,
         delta,
         model: delta.models?.[0] || incident.copilotAssignment?.model,
@@ -122,9 +128,7 @@ async function reconcileCopilotBilling(mongoId, { attempt = 1, prMetadata = {} }
       await setBillingStatus(mongoId, {
         copilotBillingStatus: 'reported',
         copilotBillingMode: 'ai_credits',
-        copilotBillingNote: before?.billingAccount === 'org' && (before?.aiCredits || 0) === 0
-          ? 'Credits from personal Copilot Pro billing API (daily Cloud Agent total for the incident UTC day).'
-          : null,
+        copilotBillingNote: null,
       });
       logger.info(`Copilot billing reconcile succeeded for ${mongoId} on attempt ${attempt} — ${delta.deltaCredits} credits`);
       await maybeAdvanceCopilotModelQueue(mongoId);
@@ -134,7 +138,7 @@ async function reconcileCopilotBilling(mongoId, { attempt = 1, prMetadata = {} }
     await setBillingStatus(mongoId, {
       copilotBillingStatus: 'api_pending',
       copilotBillingNote:
-        'GitHub org ai_credit/usage returned no billable delta yet. Billing UI may show Copilot Cloud Agent credits before this REST API populates usageItems.',
+        'GitHub ai_credit/usage returned no billable delta yet. Billing UI may show Copilot Cloud Agent credits before this REST API populates usageItems.',
     });
     logger.warn(
       `Copilot billing reconcile attempt ${attempt} for ${mongoId} — API still empty `

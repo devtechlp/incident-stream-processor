@@ -8,6 +8,8 @@ const {
   parseUsageItems,
   diffUsageSnapshots,
   CREDIT_USD_RATE,
+  shouldPreferUserBilling,
+  isCompatibleBillingSnapshot,
 } = require('../services/githubAiCredits');
 
 function testParseUsageItems() {
@@ -72,11 +74,42 @@ function testGrossWhenNetIsZero() {
   assert.strictEqual(parsed.costUsd, 0.42);
 }
 
+function testShouldPreferUserBilling() {
+  const prevAccount = process.env.COPILOT_BILLING_ACCOUNT;
+  const prevUser = process.env.COPILOT_BILLING_USER;
+  try {
+    delete process.env.COPILOT_BILLING_ACCOUNT;
+    process.env.COPILOT_BILLING_USER = 'test-user';
+    assert.strictEqual(shouldPreferUserBilling(), true);
+    process.env.COPILOT_BILLING_ACCOUNT = 'org';
+    assert.strictEqual(shouldPreferUserBilling(), false);
+  } finally {
+    if (prevAccount == null) delete process.env.COPILOT_BILLING_ACCOUNT;
+    else process.env.COPILOT_BILLING_ACCOUNT = prevAccount;
+    if (prevUser == null) delete process.env.COPILOT_BILLING_USER;
+    else process.env.COPILOT_BILLING_USER = prevUser;
+  }
+}
+
+function testCompatibleBillingSnapshot() {
+  assert.strictEqual(
+    isCompatibleBillingSnapshot({ billingAccount: 'org' }, { billingAccount: 'user' }),
+    false,
+  );
+  assert.strictEqual(
+    isCompatibleBillingSnapshot({ billingAccount: 'user' }, { billingAccount: 'user' }),
+    true,
+  );
+  assert.strictEqual(isCompatibleBillingSnapshot(null, { billingAccount: 'user' }), true);
+}
+
 function run() {
   testParseUsageItems();
   testDiffUsageSnapshots();
   testDiffFromCreditsOnly();
   testGrossWhenNetIsZero();
+  testShouldPreferUserBilling();
+  testCompatibleBillingSnapshot();
   console.log('github-ai-credits.test.js — all passed');
 }
 

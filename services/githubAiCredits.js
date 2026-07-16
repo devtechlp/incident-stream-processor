@@ -1,12 +1,9 @@
 /**
- * GitHub org AI credit usage — billing API client.
+ * GitHub AI credit usage — billing API client.
  * 1 AI credit = $0.01 USD (GitHub usage-based Copilot billing).
  *
- * IMPORTANT: Copilot AI credits come from GET .../ai_credit/usage only.
- * Do NOT use usage/summary + repository — that returns Actions minutes, not credits.
- *
- * Requires GITHUB_TOKEN with org billing read for org endpoint, or access to the
- * configured COPILOT_BILLING_USER for personal Copilot Pro Cloud Agent usage.
+ * Default billing account: COPILOT_BILLING_USER (personal Copilot Pro pool).
+ * Org billing requires COPILOT_BILLING_ACCOUNT=org and GITHUB_ORG.
  */
 
 const axios = require('axios');
@@ -142,8 +139,70 @@ function resolveBillingUser(explicitUser) {
 }
 
 function resolveBillingAccountMode() {
-  const mode = (process.env.COPILOT_BILLING_ACCOUNT || 'auto').toLowerCase();
-  return mode === 'user' || mode === 'org' || mode === 'auto' ? mode : 'auto';
+  const mode = (process.env.COPILOT_BILLING_ACCOUNT || 'user').toLowerCase();
+  return mode === 'user' || mode === 'org' || mode === 'auto' ? mode : 'user';
+}
+
+function shouldPreferUserBilling() {
+  const mode = resolveBillingAccountMode();
+  if (mode === 'user') return true;
+  if (mode === 'org') return false;
+  return Boolean(resolveBillingUser());
+}
+
+/**
+ * Resolve billing snapshot: user account by default (Copilot Pro personal pool).
+ * Org billing is only used when COPILOT_BILLING_ACCOUNT=org, or auto mode with no COPILOT_BILLING_USER.
+ */
+async function fetchAiCreditUsage(options = {}) {
+  const accountMode = resolveBillingAccountMode();
+  const billingUser = resolveBillingUser(options.user);
+  const githubOrg = process.env.GITHUB_ORG || null;
+
+  if (shouldPreferUserBilling()) {
+    if (!billingUser) {
+      throw new Error('COPILOT_BILLING_USER is not configured (required for user billing)');
+    }
+    try {
+      const userResult = await fetchUserAiCreditUsage({ ...options, user: billingUser });
+      logger.info(`Using user ai_credit/usage for ${billingUser} (${userResult.aiCredits} credits)`);
+      return userResult;
+    } catch (err) {
+      logger.warn(`User ai_credit/usage failed for ${billingUser}: ${err.message}`);
+      if (accountMode === 'user') throw err;
+    }
+  }
+
+  if (accountMode === 'org' || (accountMode === 'auto' && githubOrg)) {
+    try {
+      const orgResult = await fetchOrgAiCreditUsage({ ...options, org: githubOrg });
+      logger.info(`Using org ai_credit/usage for ${githubOrg} (${orgResult.aiCredits} credits)`);
+      return orgResult;
+    } catch (err) {
+      logger.warn(`Org ai_credit/usage failed: ${err.message}`);
+      if (accountMode === 'org') throw err;
+    }
+  }
+
+  if (billingUser) {
+    return fetchUserAiCreditUsage({ ...options, user: billingUser });
+  }
+
+  return {
+    aiCredits: 0,
+    costUsd: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cachedTokens: 0,
+    models: [],
+    products: [],
+    usageItemsCount: 0,
+    usageItems: [],
+    quantityBasis: USE_GROSS ? 'gross' : 'net',
+    capturedAt: new Date().toISOString(),
+    billingAccount: null,
+    source: 'ai_credit/usage',
+  };
 }
 
 async function fetchAiCreditUsageFromUrl(url, {
@@ -226,56 +285,6 @@ async function fetchUserAiCreditUsage({
   });
 }
 
-/**
- * Resolve billing snapshot: org API first (auto), then user API when org is empty.
- */
-async function fetchAiCreditUsage(options = {}) {
-  const accountMode = resolveBillingAccountMode();
-  const billingUser = resolveBillingUser(options.user);
-  let lastOrg;
-
-  if (accountMode !== 'user') {
-    try {
-      lastOrg = await fetchOrgAiCreditUsage(options);
-      if (lastOrg.usageItemsCount > 0 || lastOrg.aiCredits > 0) {
-        return lastOrg;
-      }
-    } catch (err) {
-      logger.warn(`Org ai_credit/usage failed: ${err.message}`);
-      lastOrg = null;
-    }
-  }
-
-  if (accountMode !== 'org' && billingUser) {
-    try {
-      const userResult = await fetchUserAiCreditUsage({ ...options, user: billingUser });
-      if (userResult.usageItemsCount > 0 || userResult.aiCredits > 0) {
-        logger.info(`Using user ai_credit/usage for ${billingUser} (${userResult.aiCredits} credits)`);
-        return userResult;
-      }
-      return userResult;
-    } catch (err) {
-      logger.warn(`User ai_credit/usage failed for ${billingUser}: ${err.message}`);
-    }
-  }
-
-  return lastOrg || {
-    aiCredits: 0,
-    costUsd: 0,
-    inputTokens: 0,
-    outputTokens: 0,
-    cachedTokens: 0,
-    models: [],
-    products: [],
-    usageItemsCount: 0,
-    usageItems: [],
-    quantityBasis: USE_GROSS ? 'gross' : 'net',
-    capturedAt: new Date().toISOString(),
-    billingAccount: null,
-    source: 'ai_credit/usage',
-  };
-}
-
 function buildFetchVariants(options = {}) {
   const variants = [options];
   if (options.product == null) {
@@ -287,7 +296,7 @@ function buildFetchVariants(options = {}) {
   return variants;
 }
 
-async function fetchOrgAiCreditUsageWithRetry(options = {}) {
+async function fetchAiCreditUsageWithRetry(options = {}) {
   const attempts = Number(process.env.COPILOT_BILLING_RETRY_ATTEMPTS || 3);
   const delayMs = Number(process.env.COPILOT_BILLING_RETRY_MS || 90000);
   let last;
@@ -308,8 +317,28 @@ async function fetchOrgAiCreditUsageWithRetry(options = {}) {
   return last;
 }
 
-/** Alias for callers that may resolve org or user billing. */
-const fetchAiCreditUsageWithRetry = fetchOrgAiCreditUsageWithRetry;
+/** @deprecated Use fetchAiCreditUsageWithRetry */
+const fetchOrgAiCreditUsageWithRetry = fetchAiCreditUsageWithRetry;
+
+async function alignBeforeSnapshotWithAfter(before, after, options = {}) {
+  if (!before || !after || isCompatibleBillingSnapshot(before, after)) {
+    return before;
+  }
+
+  const at = before.capturedAt ? new Date(before.capturedAt) : (options.at || new Date());
+  logger.warn(
+    `Billing snapshot mismatch (before=${before.billingAccount || before.source}, `
+    + `after=${after.billingAccount || after.source}) — re-fetching before on ${after.billingAccount} meter`,
+  );
+
+  if (after.billingAccount === 'user') {
+    return fetchUserAiCreditUsage({ ...options, at, user: after.user });
+  }
+  if (after.billingAccount === 'org') {
+    return fetchOrgAiCreditUsage({ ...options, at, org: after.org });
+  }
+  return fetchAiCreditUsage({ ...options, at });
+}
 
 function diffUsageSnapshots(before, after) {
   const deltaCredits = Math.max(0, (after?.aiCredits || 0) - (before?.aiCredits || 0));
@@ -357,10 +386,13 @@ module.exports = {
   fetchAiCreditUsage,
   fetchOrgAiCreditUsageWithRetry,
   fetchAiCreditUsageWithRetry,
+  alignBeforeSnapshotWithAfter,
   diffUsageSnapshots,
   hasBillableDelta,
   isCompatibleBillingSnapshot,
   isAiCreditsBillingEnabled,
   resolveBillingUser,
+  shouldPreferUserBilling,
+  resolveBillingAccountMode,
 };
 
