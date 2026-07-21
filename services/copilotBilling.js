@@ -43,11 +43,15 @@ async function setBillingStatus(mongoId, fields) {
  * After Copilot PR: fetch GitHub billing usage, diff vs chained before snapshot, log llm_invocation.
  */
 async function finalizeCopilotBilling(mongoId, { pr, repository, step = 'copilot_ai_credits_session' }) {
+  const incident = await loadIncident(mongoId);
+
+  if (!incident?.isBenchmark) {
+    return { skipped: true, reason: 'not_benchmark' };
+  }
+
   if (!isAiCreditsBillingEnabled()) {
     return logCopilotRemediationUsage(mongoId, pr, step === 'copilot_ai_credits_session' ? 'copilot_pr_opened' : step);
   }
-
-  const incident = await loadIncident(mongoId);
 
   if (incident?.copilotBillingStatus === 'reported') {
     logger.info(`Copilot billing already reported for ${mongoId} — skipping duplicate PR webhook`);

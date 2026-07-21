@@ -6,6 +6,7 @@ const dynatraceWebhook = require('./webhook/dynatraceWebhook');
 const logIngestWebhook = require('./webhook/logIngestWebhook');
 const githubWebhook = require('./webhook/githubWebhook');
 const incidentStatus = require('./api/incidentStatus');
+const applicationLogPoller = require('./services/applicationLogPoller');
 const dynatraceLogPoller = require('./services/dynatraceLogPoller');
 const logger = require('./utils/logger');
 
@@ -13,7 +14,15 @@ async function main() {
   try {
     await connectDB();
     await startChangeStream();
-    dynatraceLogPoller.start();
+    applicationLogPoller.start();
+
+    // Off by default even when DT_ENV_URL/DT_CLIENT_ID/DT_CLIENT_SECRET are populated —
+    // those can be stale leftovers in .env. Set ENABLE_DYNATRACE_POLLER=true to opt back in.
+    if ((process.env.ENABLE_DYNATRACE_POLLER || '').toLowerCase() === 'true') {
+      dynatraceLogPoller.start();
+    } else {
+      logger.info('Dynatrace log poller: ENABLE_DYNATRACE_POLLER not true — skipped');
+    }
 
     const app = express();
 
